@@ -19,11 +19,11 @@ def show_menu(app, category):
             text += f"{name}: {value}\n"
         buttons = [("⬅️ Назад", "/back")]
         inline_keyboard = build_keyboard(buttons, 2)
+        app.render_message(text=text, inline_keyboard=inline_keyboard, parse_mode=None)
     else:
         text = build_menu_text(app, menu["title"], devices)
         buttons = [(name, f"/toggle:{entity}") for name, entity in devices]
         # Добавляем кнопку "Назад" в конец
         buttons.append(("⬅️ Назад", "/back"))
         inline_keyboard = build_keyboard(buttons, 2)
-    
-    app.render_message(text=text, inline_keyboard=inline_keyboard)
+        app.render_message(text=text, inline_keyboard=inline_keyboard)

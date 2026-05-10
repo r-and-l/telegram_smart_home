@@ -35,7 +35,7 @@ class TelegramSmartHome(hass.Hass):
     # TELEGRAM RENDER MESSAGE
     # ==========================================
 
-    def render_message(self, text, inline_keyboard=None):
+    def render_message(self, text, inline_keyboard=None, parse_mode="markdown"):
         # =====================================
         # FIRST MESSAGE
         # =====================================
@@ -45,7 +45,7 @@ class TelegramSmartHome(hass.Hass):
                 "telegram_bot/send_message",
                 entity_id="notify.102_info_dom_milyi_dom",
                 message=text,
-                parse_mode="markdown",
+                parse_mode=parse_mode,
                 inline_keyboard=inline_keyboard,
             )
 
@@ -65,7 +65,7 @@ class TelegramSmartHome(hass.Hass):
                 entity_id="notify.102_info_dom_milyi_dom",
                 message_id=self.main_message_id,
                 message=text,
-                parse_mode="markdown",
+                parse_mode=parse_mode,
                 inline_keyboard=inline_keyboard
             )
 
