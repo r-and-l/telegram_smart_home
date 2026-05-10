@@ -83,6 +83,30 @@ DEVICES = [
         "type": "blinds",
         "room": "office"
     },
+    {
+        "name": "🌤️ Погода",
+        "entity": "weather.forecast_home_assistant",
+        "type": "weather",
+        "room": "outside"
+    },
+    {
+        "name": "🌖 Луна",
+        "entity": "sensor.moon_phase",
+        "type": "weather",
+        "room": "outside"
+    },
+    {
+        "name": "🌅 Восход",
+        "entity": "sensor.sun_next_rising",
+        "type": "weather",
+        "room": "outside"
+    },
+    {
+        "name": "🌇 Закат",
+        "entity": "sensor.sun_next_setting",
+        "type": "weather",
+        "room": "outside"
+    }
 ]
 
 CATEGORIES = {
@@ -97,5 +121,9 @@ CATEGORIES = {
     "blinds": {
         "title": "🪟 *Шторы*\n\n",
         "button_label": "🪟 Шторы",
+    },
+    "weather": {
+        "title": "🌤 *Погода*\n\n",
+        "button_label": "🌤 Погода",
     },
 }

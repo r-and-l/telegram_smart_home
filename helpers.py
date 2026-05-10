@@ -1,5 +1,5 @@
 from datetime import datetime
-from prettytable import PrettyTable
+from prettytable import PrettyTable, TableStyle
 
 
 def build_keyboard(items, per_row=3):
@@ -36,6 +36,11 @@ def build_device_extra_text(app, name, entity, state):
     return f"💡 {minutes} мин"
 
 
+def build_sensor_extra_text(app, name, entity, state):
+    """Возвращает значение сенсора."""
+    return str(state) if state is not None else ""
+
+
 def build_menu_text(app, title, devices, icon_func=None, extra_func=build_device_extra_text):
     """Универсальный билдер текста для любого меню устройств."""
     if icon_func is None:
@@ -46,12 +51,14 @@ def build_menu_text(app, title, devices, icon_func=None, extra_func=build_device
 
     table = PrettyTable()
     table.field_names = ["Статус", "Устройство", "Активность"]
-    table.align = "l"  # left align all columns
+    table.align = "c"  # center align all columns
+    table.set_style(TableStyle.MARKDOWN)
 
     for name, entity in devices:
         state = app.get_state(entity)
         icon = icon_func(state)
         extra = extra_func(app, name, entity, state) if extra_func else ""
+        extra = extra or ""
         table.add_row([icon, name, extra])
 
     return f"{title}\n```\n{table}\n```"

@@ -1,5 +1,5 @@
 from .config import DEVICES, CATEGORIES
-from .helpers import build_keyboard, build_menu_text
+from .helpers import build_keyboard, build_menu_text, build_sensor_extra_text
 
 
 def show_menu(app, category):
@@ -10,11 +10,16 @@ def show_menu(app, category):
     items = [d for d in DEVICES if d["type"] == category]
     devices = [(d["name"], d["entity"]) for d in items if d["entity"]]
     
-    text = build_menu_text(app, menu["title"], devices)
-    buttons = [(name, f"/toggle:{entity}") for name, entity in devices]
+    if category == "weather":
+        # Для погоды показываем только данные сенсоров и кнопку назад
+        text = build_menu_text(app, menu["title"], devices, extra_func=build_sensor_extra_text)
+        buttons = [("⬅️ Назад", "/back")]
+        inline_keyboard = build_keyboard(buttons, 2)
+    else:
+        text = build_menu_text(app, menu["title"], devices)
+        buttons = [(name, f"/toggle:{entity}") for name, entity in devices]
+        # Добавляем кнопку "Назад" в конец
+        buttons.append(("⬅️ Назад", "/back"))
+        inline_keyboard = build_keyboard(buttons, 2)
     
-    # Добавляем кнопку "Назад" в конец
-    buttons.append(("⬅️ Назад", "/back"))
-    
-    inline_keyboard = build_keyboard(buttons, 2)
     app.render_message(text=text, inline_keyboard=inline_keyboard)
