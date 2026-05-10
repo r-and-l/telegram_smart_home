@@ -1,34 +1,101 @@
-DEVICES = {
+DEVICES = [
+    {
+        "name": "🚪 Коридор",
+        "entity": "switch.svet_v_koridore_vykliuchatel",
+        "type": "lights",
+        "room": "hallway"
+    },
+    {
+        "name": "🚽 Туалет",
+        "entity": "switch.svet_v_tualete_vykliuchatel",
+        "type": "lights",
+        "room": "toilet"
+    },
+    {
+        "name": "🛁 Ванная",
+        "entity": "switch.svet_v_vannoi_vykliuchatel",
+        "type": "lights",
+        "room": "bathroom"
+    },
+    {
+        "name": "🍳 Кухня общ.",
+        "entity": "switch.svet_osnovnoi_vykliuchatel_2",
+        "type": "lights",
+        "room": "kitchen"
+    },
+    {
+        "name": "🍳 Кухня раб.",
+        "entity": "switch.rabochii_svet_vykliuchatel",
+        "type": "lights",
+        "room": "kitchen"
+    },
+    {
+        "name": "🛋️ Гостинная",
+        "entity": "switch.svet_osnovnoi_vykliuchatel",
+        "type": "lights",
+        "room": "living"
+    },
+    {
+        "name": "💤 Спальня",
+        "entity": "switch.svet_v_spalne_vykliuchatel",
+        "type": "lights",
+        "room": "bedroom"
+    },
+    {
+        "name": "💼 Оффис",
+        "entity": "switch.svet_v_igrovoi_vykliuchatel_2",
+        "type": "lights",
+        "room": "office"
+    },
+    {
+        "name": "🚿 Вытяжка ванна",
+        "entity": "light.lumi_lumi_relay_c2acn01_osveshchenie",
+        "type": "climate",
+        "room": "bathroom"
+    },
+    {
+        "name": "🚽 Вытяжка туалет",
+        "entity": "light.lumi_lumi_relay_c2acn01_osveshchenie_2",
+        "type": "climate",
+        "room": "toilet"
+    },
+    {
+        "name": "❄️ Кондиционер",
+        "entity": "climate.kondicioner",
+        "type": "climate",
+        "room": "bedroom"
+    },
+    {
+        "name": "🛋️ Гостинная",
+        "entity": "",
+        "type": "blinds",
+        "room": "living"
+    },
+    {
+        "name": "💤 Спальня",
+        "entity": "cover.shtory_v_spalne_ograzhdaiushchee_ustroistvo",
+        "type": "blinds",
+        "room": "bedroom"
+    },
+    {
+        "name": "💼 Оффис",
+        "entity": "",
+        "type": "blinds",
+        "room": "office"
+    },
+]
+
+CATEGORIES = {
     "lights": {
         "title": "🏠 *Освещение*\n\n",
         "button_label": "💡 Свет",
-        "items": [
-            ("🚪 Коридор", "switch.svet_v_koridore_vykliuchatel", "hallway"),
-            ("🚽 Туалет", "switch.svet_v_tualete_vykliuchatel", "toilet"),
-            ("🛁 Ванная", "switch.svet_v_vannoi_vykliuchatel", "bathroom"),
-            ("🍳 Кухня общ.", "switch.svet_osnovnoi_vykliuchatel_2", "kitchen"),
-            ("🍳 Кухня раб.", "switch.rabochii_svet_vykliuchatel", "kitchen"),
-            ("🛋️ Гостинная", "switch.svet_osnovnoi_vykliuchatel", "living"),
-            ("💤 Спальня", "switch.svet_v_spalne_vykliuchatel", "bedroom"),
-            ("💼 Оффис", "switch.svet_v_igrovoi_vykliuchatel_2", "office"),
-        ],
     },
     "climate": {
         "title": "🌬 *Климат*\n\n",
         "button_label": "🌡 Климат",
-        "items": [
-            ("🚿 Вытяжка ванна", "light.lumi_lumi_relay_c2acn01_osveshchenie", "bathroom"),
-            ("🚽 Вытяжка туалет", "light.lumi_lumi_relay_c2acn01_osveshchenie_2", "toilet"),
-            ("❄️ Кондиционер", "climate.kondicioner", "bedroom"),
-        ],
     },
     "blinds": {
         "title": "🪟 *Шторы*\n\n",
         "button_label": "🪟 Шторы",
-        "items": [
-            ("🛋️ Гостинная", "", "living"),
-            ("💤 Спальня", "cover.shtory_v_spalne_ograzhdaiushchee_ustroistvo", "bedroom"),
-            ("💼 Оффис", "", "office"),
-        ],
     },
 }

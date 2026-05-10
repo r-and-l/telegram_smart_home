@@ -3,7 +3,7 @@ import appdaemon.plugins.hass.hassapi as hass
 
 from .keyboards import MAIN_KEYBOARD_INLINE
 from .menus import show_menu
-from .config import DEVICES, NIGHT_MODE
+from .config import DEVICES
 
 class TelegramSmartHome(hass.Hass):
 
@@ -133,20 +133,22 @@ class TelegramSmartHome(hass.Hass):
     def _activate_night_mode(self):
         """Активирует ночной режим - выключает свет и закрывает шторы"""
         # Выключаем все источники света из раздела "lights"
-        lights_data = DEVICES.get("lights", {})
-        for name, entity in lights_data.get("items", []):
-            self.call_service(
-                "homeassistant/turn_off",
-                entity_id=entity
-            )
+        lights = [d for d in DEVICES if d["type"] == "lights"]
+        for device in lights:
+            if device["entity"]:
+                self.call_service(
+                    "homeassistant/turn_off",
+                    entity_id=device["entity"]
+                )
         
         # Закрываем шторы
-        blinds_data = DEVICES.get("blinds", {})
-        for name, entity in blinds_data.get("items", []):
-            self.call_service(
-                "cover/close_cover",
-                entity_id=entity
-            )
+        blinds = [d for d in DEVICES if d["type"] == "blinds"]
+        for device in blinds:
+            if device["entity"]:
+                self.call_service(
+                    "cover/close_cover",
+                    entity_id=device["entity"]
+                )
         
         # Меняем меню на сообщение о ночном режиме
         self.current_menu = None
@@ -161,10 +163,10 @@ class TelegramSmartHome(hass.Hass):
     
     def _initialize_menu_states(self, category):
         """Инициализирует словарь состояний для меню"""
-        menu_data = DEVICES.get(category)
-        if menu_data:
-            for name, entity in menu_data["items"]:
-                self.previous_states[entity] = self.get_state(entity)
+        devices = [d for d in DEVICES if d["type"] == category]
+        for device in devices:
+            if device["entity"]:
+                self.previous_states[device["entity"]] = self.get_state(device["entity"])
 
     # ==========================================
     # AUTO UPDATE
@@ -177,19 +179,18 @@ class TelegramSmartHome(hass.Hass):
             return
         
         # Получаем текущий раздел
-        menu_data = DEVICES.get(self.current_menu)
-        if not menu_data:
-            return
+        devices = [d for d in DEVICES if d["type"] == self.current_menu]
         
         # Проверяем, изменилось ли состояние хотя бы одного устройства
         has_changes = False
-        for name, entity in menu_data["items"]:
-            current_state = self.get_state(entity)
-            previous_state = self.previous_states.get(entity)
-            
-            if current_state != previous_state:
-                self.previous_states[entity] = current_state
-                has_changes = True
+        for device in devices:
+            if device["entity"]:
+                current_state = self.get_state(device["entity"])
+                previous_state = self.previous_states.get(device["entity"])
+                
+                if current_state != previous_state:
+                    self.previous_states[device["entity"]] = current_state
+                    has_changes = True
         
         # Если было изменение, обновляем сообщение
         if has_changes:

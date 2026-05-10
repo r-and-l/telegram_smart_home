@@ -1,4 +1,4 @@
-from .config import DEVICES
+from .config import CATEGORIES as DEVICES
 from .helpers import build_keyboard as build_inline_keyboard
 
 
