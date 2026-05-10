@@ -11,8 +11,12 @@ def show_menu(app, category):
     devices = [(d["name"], d["entity"]) for d in items if d["entity"]]
     
     if category == "weather":
-        # Для погоды показываем только данные сенсоров и кнопку назад
-        text = build_menu_text(app, menu["title"], devices, extra_func=build_sensor_extra_text)
+        # Для погоды показываем простой список сенсоров и их значений
+        text = menu["title"]
+        for name, entity in devices:
+            state = app.get_state(entity)
+            value = build_sensor_extra_text(app, name, entity, state)
+            text += f"{name}: {value}\n"
         buttons = [("⬅️ Назад", "/back")]
         inline_keyboard = build_keyboard(buttons, 2)
     else:
