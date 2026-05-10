@@ -1,5 +1,5 @@
 from datetime import datetime
-from tabulate import tabulate
+from prettytable import PrettyTable
 
 
 def build_keyboard(items, per_row=3):
@@ -44,13 +44,14 @@ def build_menu_text(app, title, devices, icon_func=None, extra_func=build_device
     if not devices:
         return title
 
-    rows = []
+    table = PrettyTable()
+    table.field_names = ["Статус", "Устройство", "Активность"]
+    table.align = "l"  # left align all columns
+
     for name, entity in devices:
         state = app.get_state(entity)
         icon = icon_func(state)
-        extra = extra_func(app, name, entity, state) if extra_func else None
-        rows.append((icon, name, extra or ""))
+        extra = extra_func(app, name, entity, state) if extra_func else ""
+        table.add_row([icon, name, extra])
 
-    headers = ["Статус", "Устройство", "Активность"]
-    table = tabulate(rows, headers=headers, tablefmt="github")
-    return f"{title}```\n{table}\n```"
+    return f"{title}\n```\n{table}\n```"
