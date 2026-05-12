@@ -3,49 +3,57 @@ DEVICES = [
         "name": "🚪 Коридор",
         "entity": "switch.svet_v_koridore_vykliuchatel",
         "type": "lights",
-        "room": "hallway"
+        "room": "hallway",
+        "timer_minutes": 15
     },
     {
         "name": "🚽 Туалет",
         "entity": "switch.svet_v_tualete_vykliuchatel",
         "type": "lights",
-        "room": "toilet"
+        "room": "toilet",
+        "timer_minutes": 10
     },
     {
         "name": "🛁 Ванная",
         "entity": "switch.svet_v_vannoi_vykliuchatel",
         "type": "lights",
-        "room": "bathroom"
+        "room": "bathroom",
+        "timer_minutes": 10
     },
     {
         "name": "🍳 Кухня общ.",
         "entity": "switch.svet_osnovnoi_vykliuchatel_2",
         "type": "lights",
-        "room": "kitchen"
+        "room": "kitchen",
+        "timer_minutes": 120
     },
     {
         "name": "🍳 Кухня раб.",
         "entity": "switch.rabochii_svet_vykliuchatel",
         "type": "lights",
-        "room": "kitchen"
+        "room": "kitchen",
+        "timer_minutes": 120
     },
     {
         "name": "🛋️ Гостинная",
         "entity": "switch.svet_osnovnoi_vykliuchatel",
         "type": "lights",
-        "room": "living"
+        "room": "living",
+        "timer_minutes": 60
     },
     {
         "name": "💤 Спальня",
         "entity": "switch.svet_v_spalne_vykliuchatel",
         "type": "lights",
-        "room": "bedroom"
+        "room": "bedroom",
+        "timer_minutes": 30
     },
     {
         "name": "💼 Оффис",
         "entity": "switch.svet_v_igrovoi_vykliuchatel_2",
         "type": "lights",
-        "room": "office"
+        "room": "office",
+        "timer_minutes": 180
     },
     {
         "name": "🚿 Вытяжка ванна",
@@ -126,4 +134,10 @@ CATEGORIES = {
         "title": "🌤 *Погода*\n\n",
         "button_label": "🌤 Погода",
     },
+}
+
+# Настройки для мониторинга света
+LIGHT_MONITOR_CONFIG = {
+    "group_notification_window": 5,  # Минуты, в течение которых группировать уведомления
+    "notification_entity": "notify.102_info_dom_milyi_dom",  # Сущность для отправки уведомлений
 }
