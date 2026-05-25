@@ -6,12 +6,29 @@ class TelegramAPI:
         self.app = app
         self.main_message_id = None
         self.notification_entity = LIGHT_MONITOR_CONFIG.get("notification_entity", "notify.102_info_dom_milyi_dom")
+        self.last_text = None
+        self.last_keyboard = None
+        self.last_parse_mode = None
 
     def reset_message_id(self):
         """Сброс ID сообщения (например, при команде /start)"""
         self.main_message_id = None
+        self.last_text = None
+        self.last_keyboard = None
+        self.last_parse_mode = None
 
     def render_message(self, text, inline_keyboard=None, parse_mode="markdown"):
+        # Предотвращаем отправку запроса, если сообщение не изменилось
+        if (self.main_message_id is not None and 
+            self.last_text == text and 
+            self.last_keyboard == inline_keyboard and
+            self.last_parse_mode == parse_mode):
+            return
+
+        self.last_text = text
+        self.last_keyboard = inline_keyboard
+        self.last_parse_mode = parse_mode
+
         if self.main_message_id is None:
             response = self.app.call_service(
                 "telegram_bot/send_message",

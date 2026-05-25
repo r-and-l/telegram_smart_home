@@ -36,9 +36,72 @@ def build_device_extra_text(app, name, entity, state):
     return f"💡 {minutes} мин"
 
 
+WEATHER_TRANSLATIONS = {
+    "clear-night": "Ясно 🌃",
+    "cloudy": "Облачно ☁️",
+    "fog": "Туман 🌫️",
+    "hail": "Град 🌨️",
+    "lightning": "Гроза ⛈️",
+    "lightning-rainy": "Гроза с дождем ⛈️",
+    "partlycloudy": "Переменная облачность ⛅",
+    "pouring": "Ливень 🌧️",
+    "rainy": "Дождь 🌧️",
+    "snowy": "Снег ❄️",
+    "snowy-rainy": "Снег с дождем 🌨️",
+    "sunny": "Ясно ☀️",
+    "windy": "Ветрено 💨",
+    "windy-variant": "Ветрено 💨",
+    "exceptional": "Особые условия ⚠️"
+}
+
+MOON_PHASES = {
+    "new_moon": "Новолуние 🌑",
+    "waxing_crescent": "Растущий серп 🌒",
+    "first_quarter": "Первая четверть 🌓",
+    "waxing_gibbous": "Растущая луна 🌔",
+    "full_moon": "Полнолуние 🌕",
+    "waning_gibbous": "Убывающая луна 🌖",
+    "third_quarter": "Последняя четверть 🌗",
+    "waning_crescent": "Убывающий серп 🌘"
+}
+
 def build_sensor_extra_text(app, name, entity, state):
-    """Возвращает значение сенсора."""
-    return str(state) if state is not None else ""
+    """Возвращает форматированное значение сенсора на русском языке."""
+    if state is None:
+        return "нет данных"
+        
+    entity_lower = entity.lower()
+    
+    # 1. Weather entity
+    if entity_lower.startswith("weather."):
+        condition = WEATHER_TRANSLATIONS.get(str(state).lower(), str(state))
+        
+        # Extract temperature and humidity attributes
+        temp = app.get_state(entity, attribute="temperature")
+        humidity = app.get_state(entity, attribute="humidity")
+        
+        parts = [condition]
+        if temp is not None:
+            parts.append(f"🌡️ {temp}°C")
+        if humidity is not None:
+            parts.append(f"💧 {humidity}%")
+            
+        return ", ".join(parts)
+        
+    # 2. Moon phase
+    elif "moon" in entity_lower:
+        return MOON_PHASES.get(str(state).lower(), str(state))
+        
+    # 3. Next sunrise/sunset time
+    elif "sun_" in entity_lower or "rising" in entity_lower or "setting" in entity_lower:
+        try:
+            dt = datetime.fromisoformat(str(state))
+            local_dt = dt.astimezone()
+            return local_dt.strftime("%H:%M")
+        except Exception:
+            return str(state)
+            
+    return str(state)
 
 
 def build_menu_text(app, title, devices, icon_func=None, extra_func=build_device_extra_text):

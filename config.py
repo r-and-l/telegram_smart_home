@@ -115,6 +115,26 @@ DEVICES = [
         "type": "weather",
         "room": "outside"
     }
+    , {
+        "name": "🌡️ Т в туалете",
+        "entity": {
+            "temperature": "sensor.temperatura_v_tualete_temperatura",
+            "humidity": "sensor.temperatura_v_tualete_vlazhnost"
+        },
+        "type": "climate",
+        "room": "toilet",
+        "is_sensor": True
+    }
+    , {
+        "name": "🌡️ Т в ванной",
+        "entity": {
+            "temperature": "sensor.datchik_v_vannoi_temperatura",
+            "humidity": "sensor.datchik_v_vannoi_vlazhnost"
+        },
+        "type": "climate",
+        "room": "bathroom",
+        "is_sensor": True
+    }
 ]
 
 CATEGORIES = {
