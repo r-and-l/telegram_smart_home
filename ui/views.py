@@ -102,7 +102,7 @@ def build_climate_sensors_text(app, sensor_items):
     if not sensor_items:
         return ""
         
-    sensor_text = "\n\n🌡 *Датчики:*\n"
+    sensor_text = "\n"
     for s in sensor_items:
         name = s["name"]
         entity_data = s.get("entity")
@@ -120,7 +120,7 @@ def build_climate_sensors_text(app, sensor_items):
             if hum_val is not None:
                 parts.append(f"💧 {hum_val}%")
             val_str = " | ".join(parts) if parts else "нет данных"
-            sensor_text += f"• {name}: {val_str}\n"
+            sensor_text += f"**{name}**: {val_str}\n"
             
         elif isinstance(entity_data, list):
             vals = []
