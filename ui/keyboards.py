@@ -1,6 +1,5 @@
-from .config import CATEGORIES as DEVICES
-from .helpers import build_keyboard as build_inline_keyboard
-
+from config import CATEGORIES as DEVICES
+from ui.views import build_keyboard as build_inline_keyboard
 
 def _get_main_menu_keyboard():
     """Создает инлайн клавиатуру для главного меню"""

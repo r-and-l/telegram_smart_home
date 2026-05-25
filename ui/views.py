@@ -2,7 +2,6 @@ from datetime import datetime
 from prettytable import PrettyTable, TableStyle
 import logging
 
-
 def build_keyboard(items, per_row=3):
     keyboard = []
     row = []
@@ -39,7 +38,6 @@ def build_device_extra_text(app, name, entity, state):
 
 def build_sensor_extra_text(app, name, entity, state):
     """Возвращает значение сенсора."""
-    logging.info(f"Сенсор {name} ({entity}): состояние = {state}")
     return str(state) if state is not None else ""
 
 
