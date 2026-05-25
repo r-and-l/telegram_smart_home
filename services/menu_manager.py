@@ -7,11 +7,83 @@ from ui.views import (
 )
 from ui.keyboards import MAIN_KEYBOARD_INLINE
 
+class Menu:
+    """Базовый класс для всех меню"""
+    def __init__(self, app, category, title):
+        self.app = app
+        self.category = category
+        self.title = title
+
+    def render(self):
+        """Возвращает кортеж (text, inline_keyboard, parse_mode)"""
+        raise NotImplementedError
+
+
+class TableMenu(Menu):
+    """Стандартное меню с таблицей управляемых устройств и кнопками-переключателями"""
+    def render(self):
+        items = [d for d in DEVICES if d["type"] == self.category]
+        control_devices = [
+            (d["name"], d["entity"])
+            for d in items
+            if d.get("entity") and isinstance(d.get("entity"), str)
+        ]
+        
+        text = build_menu_text(self.app, self.title, control_devices)
+        buttons = [(name, f"/toggle:{entity}") for name, entity in control_devices]
+        buttons.append(("⬅️ Назад", "/back"))
+        inline_keyboard = build_keyboard(buttons, 2)
+        
+        return text, inline_keyboard, "markdown"
+
+
+class ClimateMenu(TableMenu):
+    """Климатическое меню с таблицей управления и списком датчиков под ней"""
+    def render(self):
+        text, inline_keyboard, parse_mode = super().render()
+        
+        items = [d for d in DEVICES if d["type"] == self.category]
+        sensor_items = [d for d in items if d.get("is_sensor")]
+        
+        text += build_climate_sensors_text(self.app, sensor_items)
+        return text, inline_keyboard, parse_mode
+
+
+class WeatherMenu(Menu):
+    """Погодное меню, отображающее список датчиков простым текстом"""
+    def render(self):
+        items = [d for d in DEVICES if d["type"] == self.category]
+        devices = [
+            (d["name"], d["entity"])
+            for d in items
+            if d.get("entity") and isinstance(d.get("entity"), str)
+        ]
+        
+        text = self.title.replace("*", "").replace("\n\n", "\n")
+        for name, entity in devices:
+            state = self.app.get_state(entity)
+            value = build_sensor_extra_text(self.app, name, entity, state)
+            text += f"{name}: <code>{value}</code>\n"
+            
+        buttons = [("⬅️ Назад", "/back")]
+        inline_keyboard = build_keyboard(buttons, 2)
+        
+        return text, inline_keyboard, "html"
+
+
 class MenuManager:
     def __init__(self, app, telegram_api):
         self.app = app
         self.telegram = telegram_api
         self.current_menu = None
+        
+        # Декларативная регистрация разделов меню
+        self.menus = {
+            "lights": TableMenu(app, "lights", CATEGORIES["lights"]["title"]),
+            "climate": ClimateMenu(app, "climate", CATEGORIES["climate"]["title"]),
+            "blinds": TableMenu(app, "blinds", CATEGORIES["blinds"]["title"]),
+            "weather": WeatherMenu(app, "weather", CATEGORIES["weather"]["title"]),
+        }
 
         # Регистрация слушателей изменений состояний для всех сущностей в конфиге
         for device in DEVICES:
@@ -63,52 +135,19 @@ class MenuManager:
             return
         
         current_devices = [d for d in DEVICES if d["type"] == self.current_menu]
-        has_active_lights = False
-        for device in current_devices:
-            if device.get("type") == "lights":
-                entity = device.get("entity")
-                if entity and self.app.get_state(entity) == "on":
-                    has_active_lights = True
-                    break
+        has_active_lights = any(
+            d.get("type") == "lights" and d.get("entity") and self.app.get_state(d.get("entity")) == "on"
+            for d in current_devices
+        )
                     
         if has_active_lights:
             self._render_current_menu()
 
     def _render_current_menu(self):
-        category = self.current_menu
-        menu = CATEGORIES.get(category)
+        """Рендерит текущее открытое меню через соответствующий класс"""
+        menu = self.menus.get(self.current_menu)
         if not menu:
             return
-
-        items = [d for d in DEVICES if d["type"] == category]
-        
-        # Разделяем на управляемые устройства и датчики
-        control_items = [d for d in items if not d.get("is_sensor")]
-        sensor_items = [d for d in items if d.get("is_sensor")]
-
-        if category == "weather":
-            # Для погоды показываем простой список сенсоров и их значений
-            devices = [(d["name"], d["entity"]) for d in items if d.get("entity")]
-            text = menu["title"].replace("*", "").replace("\n\n", "\n")
-            for name, entity in devices:
-                if isinstance(entity, str):
-                    state = self.app.get_state(entity)
-                    value = build_sensor_extra_text(self.app, name, entity, state)
-                    text += f"{name}: <code>{value}</code>\n"
-            buttons = [("⬅️ Назад", "/back")]
-            inline_keyboard = build_keyboard(buttons, 2)
-            self.telegram.render_message(text=text, inline_keyboard=inline_keyboard, parse_mode="html")
-        else:
-            control_devices = [
-                (d["name"], d["entity"])
-                for d in control_items
-                if d.get("entity") and isinstance(d.get("entity"), str)
-            ]
-            text = build_menu_text(self.app, menu["title"], control_devices)
-            text += build_climate_sensors_text(self.app, sensor_items)
-
-            buttons = [(name, f"/toggle:{entity}") for name, entity in control_devices]
-            buttons.append(("⬅️ Назад", "/back"))
-            inline_keyboard = build_keyboard(buttons, 2)
-            self.telegram.render_message(text=text, inline_keyboard=inline_keyboard)
-
+            
+        text, inline_keyboard, parse_mode = menu.render()
+        self.telegram.render_message(text=text, inline_keyboard=inline_keyboard, parse_mode=parse_mode)

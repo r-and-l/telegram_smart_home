@@ -94,7 +94,7 @@ def build_menu_text(app, title, devices, icon_func=None, extra_func=build_device
         extra = extra or ""
         table.add_row([icon, name, extra])
 
-    return f"{title}\n```\n{table}\n```"
+    return f"{title}\n```{table}\n```"
 
 
 def build_climate_sensors_text(app, sensor_items):
@@ -135,11 +135,11 @@ def build_climate_sensors_text(app, sensor_items):
                         else:
                             vals.append(str(val))
             val_str = " | ".join(vals) if vals else "нет данных"
-            sensor_text += f"• {name}: {val_str}\n"
+            sensor_text += f"{name}: {val_str}\n"
             
         elif isinstance(entity_data, str):
             val = app.get_state(entity_data)
             val_str = str(val) if val is not None else "нет данных"
-            sensor_text += f"• {name}: {val_str}\n"
+            sensor_text += f"{name}: {val_str}\n"
             
     return sensor_text
