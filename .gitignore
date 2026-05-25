@@ -14,3 +14,4 @@ venv.bak/
 
 # Logs
 *.log
+state.json
