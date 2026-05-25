@@ -46,10 +46,7 @@ class LightMonitor:
         """Удаляет уведомление о свете"""
         if entity in self.active_notifications:
             message_id = self.active_notifications[entity]
-            self.telegram.edit_notification(
-                message_id=message_id,
-                text=""
-            )
+            self.telegram.delete_notification(message_id)
             del self.active_notifications[entity]
             self.app.log(f"Removed notification for {entity}")
 
