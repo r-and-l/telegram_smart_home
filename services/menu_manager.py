@@ -1,5 +1,10 @@
 from config import DEVICES, CATEGORIES
-from ui.views import build_keyboard, build_menu_text, build_sensor_extra_text
+from ui.views import (
+    build_keyboard,
+    build_menu_text,
+    build_sensor_extra_text,
+    build_climate_sensors_text,
+)
 from ui.keyboards import MAIN_KEYBOARD_INLINE
 
 class MenuManager:
@@ -94,52 +99,13 @@ class MenuManager:
             inline_keyboard = build_keyboard(buttons, 2)
             self.telegram.render_message(text=text, inline_keyboard=inline_keyboard, parse_mode="html")
         else:
-            control_devices = [(d["name"], d["entity"]) for d in control_items if d.get("entity") and isinstance(d.get("entity"), str)]
+            control_devices = [
+                (d["name"], d["entity"])
+                for d in control_items
+                if d.get("entity") and isinstance(d.get("entity"), str)
+            ]
             text = build_menu_text(self.app, menu["title"], control_devices)
-            
-            # Добавляем датчики просто текстом снизу
-            if sensor_items:
-                sensor_text = "\n\n🌡 *Датчики:*\n"
-                for s in sensor_items:
-                    name = s["name"]
-                    entity_data = s.get("entity")
-                    
-                    if isinstance(entity_data, dict):
-                        temp_entity = entity_data.get("temperature")
-                        hum_entity = entity_data.get("humidity")
-                        
-                        temp_val = self.app.get_state(temp_entity) if temp_entity else None
-                        hum_val = self.app.get_state(hum_entity) if hum_entity else None
-                        
-                        parts = []
-                        if temp_val is not None:
-                            parts.append(f"🌡️ {temp_val}°C")
-                        if hum_val is not None:
-                            parts.append(f"💧 {hum_val}%")
-                        val_str = " | ".join(parts) if parts else "нет данных"
-                        sensor_text += f"• {name}: {val_str}\n"
-                        
-                    elif isinstance(entity_data, list):
-                        vals = []
-                        for ent in entity_data:
-                            if isinstance(ent, str):
-                                val = self.app.get_state(ent)
-                                if val is not None:
-                                    if "temp" in ent or "temperatura" in ent:
-                                        vals.append(f"🌡️ {val}°C")
-                                    elif "vlag" in ent or "vlazhnost" in ent or "hum" in ent:
-                                        vals.append(f"💧 {val}%")
-                                    else:
-                                        vals.append(str(val))
-                        val_str = " | ".join(vals) if vals else "нет данных"
-                        sensor_text += f"• {name}: {val_str}\n"
-                        
-                    elif isinstance(entity_data, str):
-                        val = self.app.get_state(entity_data)
-                        val_str = str(val) if val is not None else "нет данных"
-                        sensor_text += f"• {name}: {val_str}\n"
-                
-                text += sensor_text
+            text += build_climate_sensors_text(self.app, sensor_items)
 
             buttons = [(name, f"/toggle:{entity}") for name, entity in control_devices]
             buttons.append(("⬅️ Назад", "/back"))

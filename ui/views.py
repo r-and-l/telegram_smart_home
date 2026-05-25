@@ -1,8 +1,9 @@
 from datetime import datetime
 from prettytable import PrettyTable, TableStyle
-import logging
+from ui.translations import WEATHER_TRANSLATIONS, MOON_PHASES
 
 def build_keyboard(items, per_row=3):
+    """Строит инлайн-клавиатуру с заданным числом кнопок в ряду."""
     keyboard = []
     row = []
 
@@ -36,35 +37,6 @@ def build_device_extra_text(app, name, entity, state):
     return f"💡 {minutes} мин"
 
 
-WEATHER_TRANSLATIONS = {
-    "clear-night": "Ясно 🌃",
-    "cloudy": "Облачно ☁️",
-    "fog": "Туман 🌫️",
-    "hail": "Град 🌨️",
-    "lightning": "Гроза ⛈️",
-    "lightning-rainy": "Гроза с дождем ⛈️",
-    "partlycloudy": "Переменная облачность ⛅",
-    "pouring": "Ливень 🌧️",
-    "rainy": "Дождь 🌧️",
-    "snowy": "Снег ❄️",
-    "snowy-rainy": "Снег с дождем 🌨️",
-    "sunny": "Ясно ☀️",
-    "windy": "Ветрено 💨",
-    "windy-variant": "Ветрено 💨",
-    "exceptional": "Особые условия ⚠️"
-}
-
-MOON_PHASES = {
-    "new_moon": "Новолуние 🌑",
-    "waxing_crescent": "Растущий серп 🌒",
-    "first_quarter": "Первая четверть 🌓",
-    "waxing_gibbous": "Растущая луна 🌔",
-    "full_moon": "Полнолуние 🌕",
-    "waning_gibbous": "Убывающая луна 🌖",
-    "third_quarter": "Последняя четверть 🌗",
-    "waning_crescent": "Убывающий серп 🌘"
-}
-
 def build_sensor_extra_text(app, name, entity, state):
     """Возвращает форматированное значение сенсора на русском языке."""
     if state is None:
@@ -72,11 +44,9 @@ def build_sensor_extra_text(app, name, entity, state):
         
     entity_lower = entity.lower()
     
-    # 1. Weather entity
+    # 1. Погода weather.*
     if entity_lower.startswith("weather."):
         condition = WEATHER_TRANSLATIONS.get(str(state).lower(), str(state))
-        
-        # Extract temperature and humidity attributes
         temp = app.get_state(entity, attribute="temperature")
         humidity = app.get_state(entity, attribute="humidity")
         
@@ -88,11 +58,11 @@ def build_sensor_extra_text(app, name, entity, state):
             
         return ", ".join(parts)
         
-    # 2. Moon phase
+    # 2. Фаза луны
     elif "moon" in entity_lower:
         return MOON_PHASES.get(str(state).lower(), str(state))
         
-    # 3. Next sunrise/sunset time
+    # 3. Время восхода/заката
     elif "sun_" in entity_lower or "rising" in entity_lower or "setting" in entity_lower:
         try:
             dt = datetime.fromisoformat(str(state))
@@ -105,7 +75,7 @@ def build_sensor_extra_text(app, name, entity, state):
 
 
 def build_menu_text(app, title, devices, icon_func=None, extra_func=build_device_extra_text):
-    """Универсальный билдер текста для любого меню устройств."""
+    """Универсальный билдер текста для любого меню устройств (в виде Markdown-таблицы)."""
     if icon_func is None:
         icon_func = lambda state: "🟢" if state == "on" else "⚫"
 
@@ -114,7 +84,7 @@ def build_menu_text(app, title, devices, icon_func=None, extra_func=build_device
 
     table = PrettyTable()
     table.field_names = ["Статус", "Устройство", "Активность"]
-    table.align = "c"  # center align all columns
+    table.align = "c"
     table.set_style(TableStyle.MARKDOWN)
 
     for name, entity in devices:
@@ -125,3 +95,51 @@ def build_menu_text(app, title, devices, icon_func=None, extra_func=build_device
         table.add_row([icon, name, extra])
 
     return f"{title}\n```\n{table}\n```"
+
+
+def build_climate_sensors_text(app, sensor_items):
+    """Строит текстовый блок для датчиков климата."""
+    if not sensor_items:
+        return ""
+        
+    sensor_text = "\n\n🌡 *Датчики:*\n"
+    for s in sensor_items:
+        name = s["name"]
+        entity_data = s.get("entity")
+        
+        if isinstance(entity_data, dict):
+            temp_entity = entity_data.get("temperature")
+            hum_entity = entity_data.get("humidity")
+            
+            temp_val = app.get_state(temp_entity) if temp_entity else None
+            hum_val = app.get_state(hum_entity) if hum_entity else None
+            
+            parts = []
+            if temp_val is not None:
+                parts.append(f"🌡️ {temp_val}°C")
+            if hum_val is not None:
+                parts.append(f"💧 {hum_val}%")
+            val_str = " | ".join(parts) if parts else "нет данных"
+            sensor_text += f"• {name}: {val_str}\n"
+            
+        elif isinstance(entity_data, list):
+            vals = []
+            for ent in entity_data:
+                if isinstance(ent, str):
+                    val = app.get_state(ent)
+                    if val is not None:
+                        if "temp" in ent or "temperatura" in ent:
+                            vals.append(f"🌡️ {val}°C")
+                        elif "vlag" in ent or "vlazhnost" in ent or "hum" in ent:
+                            vals.append(f"💧 {val}%")
+                        else:
+                            vals.append(str(val))
+            val_str = " | ".join(vals) if vals else "нет данных"
+            sensor_text += f"• {name}: {val_str}\n"
+            
+        elif isinstance(entity_data, str):
+            val = app.get_state(entity_data)
+            val_str = str(val) if val is not None else "нет данных"
+            sensor_text += f"• {name}: {val_str}\n"
+            
+    return sensor_text

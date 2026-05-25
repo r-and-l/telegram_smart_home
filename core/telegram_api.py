@@ -53,24 +53,26 @@ class TelegramAPI:
                 inline_keyboard=inline_keyboard
             )
 
-    def send_notification(self, text, inline_keyboard=None):
+    def send_notification(self, text, inline_keyboard=None, parse_mode="markdown"):
         """Отправляет новое сообщение (например, уведомление), возвращает message_id"""
         response = self.app.call_service(
             "telegram_bot/send_message",
             entity_id=self.notification_entity,
             message=text,
+            parse_mode=parse_mode,
             inline_keyboard=inline_keyboard
         )
         if response and "result" in response:
             return response["result"]["response"]["chats"][0]["message_id"]
         return None
 
-    def edit_notification(self, message_id, text, inline_keyboard=None):
+    def edit_notification(self, message_id, text, inline_keyboard=None, parse_mode="markdown"):
         """Редактирует или удаляет уведомление"""
         self.app.call_service(
             "telegram_bot/edit_message",
             entity_id=self.notification_entity,
             message_id=message_id,
             message=text,
+            parse_mode=parse_mode,
             inline_keyboard=inline_keyboard or []
         )
