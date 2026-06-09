@@ -40,4 +40,4 @@ class TelegramSmartHome(hass.Hass):
         )
 
         self.log("SMART HOME BOT STARTED")
-        # reload trigger 7
+        # reload trigger 8

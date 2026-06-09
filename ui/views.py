@@ -161,7 +161,14 @@ def build_ac_text(name, state, current_temp, target_temp, fan_mode):
         "medium": "Средняя",
         "high": "Высокая",
         "silent": "Тихий",
-        "turbo": "Турбо"
+        "turbo": "Турбо",
+        "level1": "Скорость 1 (Мин)",
+        "level2": "Скорость 2",
+        "level3": "Скорость 3",
+        "level4": "Скорость 4 (Средн)",
+        "level5": "Скорость 5",
+        "level6": "Скорость 6",
+        "level7": "Скорость 7 (Макс)",
     }
     
     mode_text = modes_ru.get(str(state).lower(), str(state))
@@ -196,9 +203,9 @@ def build_ac_keyboard(entity_id):
         ],
         [
             ("Авт", f"/ac:fan:{entity_id}:auto"),
-            ("Слаб", f"/ac:fan:{entity_id}:low"),
-            ("Ср", f"/ac:fan:{entity_id}:medium"),
-            ("Сильн", f"/ac:fan:{entity_id}:high"),
+            ("Слаб", f"/ac:fan:{entity_id}:level1"),
+            ("Ср", f"/ac:fan:{entity_id}:level4"),
+            ("Сильн", f"/ac:fan:{entity_id}:level7"),
         ],
         [
             ("⬅️ Назад в Климат", "/menu:climate")
