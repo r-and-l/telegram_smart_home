@@ -144,7 +144,7 @@ def build_climate_sensors_text(app, sensor_items):
             
     return sensor_text
 
-def build_ac_text(name, state, current_temp, target_temp):
+def build_ac_text(name, state, current_temp, target_temp, fan_mode):
     """Строит текст для подменю кондиционера"""
     modes_ru = {
         "off": "🛑 Выключен",
@@ -155,7 +155,17 @@ def build_ac_text(name, state, current_temp, target_temp):
         "auto": "🤖 Авто",
         "fresh_air": "🍃 Бризер"
     }
+    fan_modes_ru = {
+        "auto": "Авто",
+        "low": "Низкая",
+        "medium": "Средняя",
+        "high": "Высокая",
+        "silent": "Тихий",
+        "turbo": "Турбо"
+    }
+    
     mode_text = modes_ru.get(str(state).lower(), str(state))
+    fan_text = fan_modes_ru.get(str(fan_mode).lower(), str(fan_mode)) if fan_mode else "нет данных"
     
     text = f"⚙️ **Управление: {name}**\n\n"
     text += f"**Режим:** {mode_text}\n"
@@ -163,6 +173,7 @@ def build_ac_text(name, state, current_temp, target_temp):
         text += f"**В комнате:** {current_temp}°C\n"
     if target_temp is not None:
         text += f"**Установлено:** {target_temp}°C\n"
+    text += f"**Вентилятор:** {fan_text}\n"
         
     return text
 
@@ -171,19 +182,23 @@ def build_ac_keyboard(entity_id):
     return [
         [
             ("❄️ Охл", f"/ac:mode:{entity_id}:cool"),
-            ("☀️ Наг", f"/ac:mode:{entity_id}:heat"),
-        ],
-        [
+            ("☀️ Нагрев", f"/ac:mode:{entity_id}:heat"),
             ("💨 Вент", f"/ac:mode:{entity_id}:fan_only"),
-            ("💧 Осуш", f"/ac:mode:{entity_id}:dry"),
         ],
         [
+            ("💧 Осуш", f"/ac:mode:{entity_id}:dry"),
             ("🛑 Выкл", f"/ac:mode:{entity_id}:off"),
             ("🍃 Бризер", f"/ac:mode:{entity_id}:fresh_air"),
         ],
         [
             ("➖ Меньше", f"/ac:temp:{entity_id}:down"),
             ("➕ Больше", f"/ac:temp:{entity_id}:up"),
+        ],
+        [
+            ("Авт", f"/ac:fan:{entity_id}:auto"),
+            ("Слаб", f"/ac:fan:{entity_id}:low"),
+            ("Ср", f"/ac:fan:{entity_id}:medium"),
+            ("Сильн", f"/ac:fan:{entity_id}:high"),
         ],
         [
             ("⬅️ Назад в Климат", "/menu:climate")

@@ -38,7 +38,7 @@ class TableMenu(Menu):
                 buttons.append((name, f"/toggle:{entity}"))
                 
         buttons.append(("⬅️ Назад", "/back"))
-        inline_keyboard = build_keyboard(buttons, 2)
+        inline_keyboard = build_keyboard(buttons, 3)
         
         return text, inline_keyboard, "markdown"
 
@@ -94,9 +94,10 @@ class ACMenu(Menu):
         state = self.app.get_state(self.entity_id)
         current_temp = self.app.get_state(self.entity_id, attribute="current_temperature")
         target_temp = self.app.get_state(self.entity_id, attribute="temperature")
+        fan_mode = self.app.get_state(self.entity_id, attribute="fan_mode")
         
         from ui.views import build_ac_text, build_ac_keyboard
-        text = build_ac_text(name, state, current_temp, target_temp)
+        text = build_ac_text(name, state, current_temp, target_temp, fan_mode)
         inline_keyboard = build_ac_keyboard(self.entity_id)
         
         return text, inline_keyboard, "markdown"

@@ -65,6 +65,16 @@ class Router:
                         pass
             if self.menu_manager.current_menu:
                 self.menu_manager.show_ac_menu(entity)
+
+        elif command.startswith("/ac:fan:"):
+            # format: /ac:fan:climate.entity_id:low
+            parts = command.split(":")
+            if len(parts) == 4:
+                entity = parts[2]
+                fan_mode = parts[3]
+                self.app.call_service("climate/set_fan_mode", entity_id=entity, fan_mode=fan_mode)
+            if self.menu_manager.current_menu:
+                self.menu_manager.show_ac_menu(entity)
         
         elif command.startswith("/toggle:"):
             entity = command.replace("/toggle:", "")
