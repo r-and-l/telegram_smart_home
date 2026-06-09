@@ -144,7 +144,7 @@ def build_climate_sensors_text(app, sensor_items):
             
     return sensor_text
 
-def build_ac_text(name, state, current_temp, target_temp, fan_mode):
+def build_ac_text(name, state, current_temp, target_temp, fan_mode, breather_state=None, breather_mode=None):
     """Строит текст для подменю кондиционера"""
     modes_ru = {
         "off": "🛑 Выключен",
@@ -152,8 +152,7 @@ def build_ac_text(name, state, current_temp, target_temp, fan_mode):
         "heat": "☀️ Обогрев",
         "dry": "💧 Осушение",
         "fan_only": "💨 Вентилятор",
-        "auto": "🤖 Авто",
-        "fresh_air": "🍃 Бризер"
+        "auto": "🤖 Авто"
     }
     fan_modes_ru = {
         "auto": "Авто",
@@ -181,6 +180,11 @@ def build_ac_text(name, state, current_temp, target_temp, fan_mode):
     if target_temp is not None:
         text += f"**Установлено:** {target_temp}°C\n"
     text += f"**Вентилятор:** {fan_text}\n"
+    
+    if breather_state:
+        b_state_ru = "Вкл" if breather_state == "on" else "Выкл"
+        b_mode_ru = fan_modes_ru.get(str(breather_mode).lower(), str(breather_mode)) if breather_mode else ""
+        text += f"**Бризер:** {b_state_ru} {b_mode_ru}\n"
         
     return text
 
@@ -195,7 +199,6 @@ def build_ac_keyboard(entity_id):
         [
             ("💧 Осуш", f"/ac:mode:{entity_id}:dry"),
             ("🛑 Выкл", f"/ac:mode:{entity_id}:off"),
-            ("🍃 Бризер", f"/ac:mode:{entity_id}:fresh_air"),
         ],
         [
             ("➖ Меньше", f"/ac:temp:{entity_id}:down"),
@@ -206,6 +209,13 @@ def build_ac_keyboard(entity_id):
             ("Слаб", f"/ac:fan:{entity_id}:level1"),
             ("Ср", f"/ac:fan:{entity_id}:level4"),
             ("Сильн", f"/ac:fan:{entity_id}:level7"),
+        ],
+        [
+            ("🍃 Выкл", f"/ac:breather:{entity_id}:off"),
+            ("🍃 Авт", f"/ac:breather:{entity_id}:auto"),
+            ("🍃 1", f"/ac:breather:{entity_id}:level1"),
+            ("🍃 3", f"/ac:breather:{entity_id}:level3"),
+            ("🍃 5", f"/ac:breather:{entity_id}:level5"),
         ],
         [
             ("⬅️ Назад в Климат", "/menu:climate")

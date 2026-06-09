@@ -75,6 +75,22 @@ class Router:
                 self.app.call_service("climate/set_fan_mode", entity_id=entity, fan_mode=fan_mode)
             if self.menu_manager.current_menu:
                 self.menu_manager.show_ac_menu(entity)
+                
+        elif command.startswith("/ac:breather:"):
+            # format: /ac:breather:climate.entity_id:level1
+            parts = command.split(":")
+            if len(parts) == 4:
+                entity = parts[2]
+                mode = parts[3]
+                breather_ent = "fan.xiaomi_mt0_1917_air_fresh"
+                if mode == "off":
+                    self.app.call_service("fan/turn_off", entity_id=breather_ent)
+                else:
+                    self.app.call_service("fan/turn_on", entity_id=breather_ent)
+                    if mode != "on":
+                        self.app.call_service("fan/set_preset_mode", entity_id=breather_ent, preset_mode=mode)
+            if self.menu_manager.current_menu:
+                self.menu_manager.show_ac_menu(entity)
         
         elif command.startswith("/toggle:"):
             entity = command.replace("/toggle:", "")

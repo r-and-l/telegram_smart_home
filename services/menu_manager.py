@@ -96,8 +96,12 @@ class ACMenu(Menu):
         target_temp = self.app.get_state(self.entity_id, attribute="temperature")
         fan_mode = self.app.get_state(self.entity_id, attribute="fan_mode")
         
+        breather_ent = "fan.xiaomi_mt0_1917_air_fresh"
+        breather_state = self.app.get_state(breather_ent)
+        breather_mode = self.app.get_state(breather_ent, attribute="preset_mode")
+        
         from ui.views import build_ac_text, build_ac_keyboard
-        text = build_ac_text(name, state, current_temp, target_temp, fan_mode)
+        text = build_ac_text(name, state, current_temp, target_temp, fan_mode, breather_state, breather_mode)
         inline_keyboard = build_ac_keyboard(self.entity_id)
         
         return text, inline_keyboard, "markdown"
