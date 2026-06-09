@@ -30,7 +30,13 @@ class TableMenu(Menu):
         ]
         
         text = build_menu_text(self.app, self.title, control_devices)
-        buttons = [(name, f"/toggle:{entity}") for name, entity in control_devices]
+        buttons = []
+        for name, entity in control_devices:
+            if entity.startswith("climate."):
+                buttons.append((name, f"/menu:ac:{entity}"))
+            else:
+                buttons.append((name, f"/toggle:{entity}"))
+                
         buttons.append(("⬅️ Назад", "/back"))
         inline_keyboard = build_keyboard(buttons, 2)
         
@@ -69,6 +75,31 @@ class WeatherMenu(Menu):
         inline_keyboard = build_keyboard(buttons, 2)
         
         return text, inline_keyboard, "html"
+
+
+class ACMenu(Menu):
+    """Меню управления кондиционером"""
+    def __init__(self, app, entity_id):
+        self.app = app
+        self.entity_id = entity_id
+        
+    def render(self):
+        # Находим имя кондиционера в конфиге
+        name = "Кондиционер"
+        for d in DEVICES:
+            if d.get("entity") == self.entity_id:
+                name = d.get("name")
+                break
+                
+        state = self.app.get_state(self.entity_id)
+        current_temp = self.app.get_state(self.entity_id, attribute="current_temperature")
+        target_temp = self.app.get_state(self.entity_id, attribute="temperature")
+        
+        from ui.views import build_ac_text, build_ac_keyboard
+        text = build_ac_text(name, state, current_temp, target_temp)
+        inline_keyboard = build_ac_keyboard(self.entity_id)
+        
+        return text, inline_keyboard, "markdown"
 
 
 class MenuManager:
@@ -129,6 +160,11 @@ class MenuManager:
         self.current_menu = category
         self._render_current_menu()
 
+    def show_ac_menu(self, entity_id):
+        """Отображает меню конкретного кондиционера"""
+        self.current_menu = f"ac:{entity_id}"
+        self._render_current_menu()
+
     def auto_update(self, kwargs):
         """Обновляет сообщение раз в минуту, если в текущем меню горит свет (для обновления таймеров)"""
         if self.current_menu is None or self.telegram.main_message_id is None:
@@ -145,7 +181,12 @@ class MenuManager:
 
     def _render_current_menu(self):
         """Рендерит текущее открытое меню через соответствующий класс"""
-        menu = self.menus.get(self.current_menu)
+        if self.current_menu.startswith("ac:"):
+            entity_id = self.current_menu.replace("ac:", "")
+            menu = ACMenu(self.app, entity_id)
+        else:
+            menu = self.menus.get(self.current_menu)
+            
         if not menu:
             return
             

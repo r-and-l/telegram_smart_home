@@ -143,3 +143,49 @@ def build_climate_sensors_text(app, sensor_items):
             sensor_text += f"{name}: {val_str}\n"
             
     return sensor_text
+
+def build_ac_text(name, state, current_temp, target_temp):
+    """Строит текст для подменю кондиционера"""
+    modes_ru = {
+        "off": "🛑 Выключен",
+        "cool": "❄️ Охлаждение",
+        "heat": "☀️ Обогрев",
+        "dry": "💧 Осушение",
+        "fan_only": "💨 Вентилятор",
+        "auto": "🤖 Авто",
+        "fresh_air": "🍃 Бризер"
+    }
+    mode_text = modes_ru.get(str(state).lower(), str(state))
+    
+    text = f"⚙️ **Управление: {name}**\n\n"
+    text += f"**Режим:** {mode_text}\n"
+    if current_temp is not None:
+        text += f"**В комнате:** {current_temp}°C\n"
+    if target_temp is not None:
+        text += f"**Установлено:** {target_temp}°C\n"
+        
+    return text
+
+def build_ac_keyboard(entity_id):
+    """Строит клавиатуру для пульта кондиционера"""
+    return [
+        [
+            {"text": "❄️ Охл", "callback_data": f"/ac:mode:{entity_id}:cool"},
+            {"text": "☀️ Нагрев", "callback_data": f"/ac:mode:{entity_id}:heat"},
+        ],
+        [
+            {"text": "💨 Вент", "callback_data": f"/ac:mode:{entity_id}:fan_only"},
+            {"text": "💧 Осуш", "callback_data": f"/ac:mode:{entity_id}:dry"},
+        ],
+        [
+            {"text": "🛑 Выкл", "callback_data": f"/ac:mode:{entity_id}:off"},
+            {"text": "🍃 Бризер", "callback_data": f"/ac:mode:{entity_id}:fresh_air"}, # Добавили бризер
+        ],
+        [
+            {"text": "➖ Меньше", "callback_data": f"/ac:temp:{entity_id}:down"},
+            {"text": "➕ Больше", "callback_data": f"/ac:temp:{entity_id}:up"},
+        ],
+        [
+            {"text": "⬅️ Назад в Климат", "callback_data": "/menu:climate"}
+        ]
+    ]

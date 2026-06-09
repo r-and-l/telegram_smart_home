@@ -97,6 +97,7 @@ class TelegramAPI:
                 if self.chat_id:
                     kwargs["chat_id"] = self.chat_id
 
+                self.app.log(f"✏️ EDITING MESSAGE (message_id: {self.main_message_id}, chat_id: {self.chat_id})")
                 self.app.call_service(
                     "telegram_bot/edit_message",
                     **kwargs
