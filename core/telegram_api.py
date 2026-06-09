@@ -73,6 +73,7 @@ class TelegramAPI:
             if self.chat_id:
                 kwargs["target"] = self.chat_id
 
+            self.app.log(f"📤 SENDING NEW MESSAGE (target: {self.chat_id})")
             response = self.app.call_service(
                 "telegram_bot/send_message",
                 **kwargs

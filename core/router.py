@@ -10,6 +10,7 @@ class Router:
         self.app.listen_event(self.inline_callback, "telegram_callback")
 
     def telegram_command(self, event_name, data, kwargs):
+        self.app.log(f"📥 RECEIVED TELEGRAM COMMAND: {data}")
         command = data.get("command")
         chat_id = data.get("chat_id")
         self.telegram.update_chat_id(chat_id)
@@ -19,6 +20,7 @@ class Router:
             self.menu_manager.show_main_menu()
 
     def inline_callback(self, event_name, data, kwargs):
+        self.app.log(f"🔘 RECEIVED TELEGRAM CALLBACK: {data}")
         command = data.get("command", "")
         chat_id = data.get("chat_id")
         self.telegram.update_chat_id(chat_id)
