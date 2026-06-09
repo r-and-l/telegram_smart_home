@@ -159,5 +159,9 @@ CATEGORIES = {
 # Настройки для мониторинга света
 LIGHT_MONITOR_CONFIG = {
     "group_notification_window": 5,  # Минуты, в течение которых группировать уведомления
-    "notification_entity": "notify.102_info_dom_milyi_dom",  # Сущность для отправки уведомлений
+}
+
+# Общие настройки Telegram
+TELEGRAM_CONFIG = {
+    "chat_id": None,  # Если у вас несколько чатов, укажите здесь ID нужного (например, 123456789)
 }

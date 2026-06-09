@@ -11,12 +11,17 @@ class Router:
 
     def telegram_command(self, event_name, data, kwargs):
         command = data.get("command")
+        chat_id = data.get("chat_id")
+        self.telegram.update_chat_id(chat_id)
+
         if command == "/start":
             self.telegram.reset_message_id()
             self.menu_manager.show_main_menu()
 
     def inline_callback(self, event_name, data, kwargs):
         command = data.get("command", "")
+        chat_id = data.get("chat_id")
+        self.telegram.update_chat_id(chat_id)
         
         if command.startswith("/menu:"):
             category = command.replace("/menu:", "")
