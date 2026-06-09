@@ -15,3 +15,6 @@ venv.bak/
 # Logs
 *.log
 state.json
+
+# Local Configuration
+config.py
