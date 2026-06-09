@@ -170,22 +170,22 @@ def build_ac_keyboard(entity_id):
     """Строит клавиатуру для пульта кондиционера"""
     return [
         [
-            {"text": "❄️ Охл", "callback_data": f"/ac:mode:{entity_id}:cool"},
-            {"text": "☀️ Нагрев", "callback_data": f"/ac:mode:{entity_id}:heat"},
+            ("❄️ Охл", f"/ac:mode:{entity_id}:cool"),
+            ("☀️ Наг", f"/ac:mode:{entity_id}:heat"),
         ],
         [
-            {"text": "💨 Вент", "callback_data": f"/ac:mode:{entity_id}:fan_only"},
-            {"text": "💧 Осуш", "callback_data": f"/ac:mode:{entity_id}:dry"},
+            ("💨 Вент", f"/ac:mode:{entity_id}:fan_only"),
+            ("💧 Осуш", f"/ac:mode:{entity_id}:dry"),
         ],
         [
-            {"text": "🛑 Выкл", "callback_data": f"/ac:mode:{entity_id}:off"},
-            {"text": "🍃 Бризер", "callback_data": f"/ac:mode:{entity_id}:fresh_air"}, # Добавили бризер
+            ("🛑 Выкл", f"/ac:mode:{entity_id}:off"),
+            ("🍃 Бризер", f"/ac:mode:{entity_id}:fresh_air"),
         ],
         [
-            {"text": "➖ Меньше", "callback_data": f"/ac:temp:{entity_id}:down"},
-            {"text": "➕ Больше", "callback_data": f"/ac:temp:{entity_id}:up"},
+            ("➖ Меньше", f"/ac:temp:{entity_id}:down"),
+            ("➕ Больше", f"/ac:temp:{entity_id}:up"),
         ],
         [
-            {"text": "⬅️ Назад в Климат", "callback_data": "/menu:climate"}
+            ("⬅️ Назад в Климат", "/menu:climate")
         ]
     ]
