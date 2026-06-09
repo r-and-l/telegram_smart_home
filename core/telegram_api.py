@@ -70,10 +70,11 @@ class TelegramAPI:
             }
             if inline_keyboard is not None:
                 kwargs["inline_keyboard"] = inline_keyboard
-            if self.chat_id:
-                kwargs["target"] = self.chat_id
+            # В AppDaemon есть баг: он перехватывает аргумент `target` и переносит его в корень запроса HA,
+            # из-за чего HA выдает ошибку invalid_format. Поэтому мы не можем передать `target` для `send_message`.
+            # Home Assistant отправит сообщение в первый чат из списка `allowed_chat_ids`.
 
-            self.app.log(f"📤 SENDING NEW MESSAGE (target: {self.chat_id})")
+            self.app.log(f"📤 SENDING NEW MESSAGE (target omitted due to AD bug, will use HA default)")
             response = self.app.call_service(
                 "telegram_bot/send_message",
                 **kwargs
