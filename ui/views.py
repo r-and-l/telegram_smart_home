@@ -1,6 +1,83 @@
+import unicodedata
 from datetime import datetime
-from prettytable import PrettyTable, TableStyle
 from ui.translations import WEATHER_TRANSLATIONS, MOON_PHASES
+
+def get_visual_width(text: str) -> int:
+    """Расчет визуальной ширины строки в моноширинном шрифте Telegram с учетом эмодзи."""
+    width = 0
+    for char in str(text):
+        if char in ('\ufe0f', '\ufe0e', '\u200d'):
+            continue
+        code = ord(char)
+        if (0x1F300 <= code <= 0x1F9FF or
+            0x2600 <= code <= 0x27BF or
+            0x1F600 <= code <= 0x1F64F or
+            0x1F680 <= code <= 0x1F6FF or
+            0x2300 <= code <= 0x23FF or
+            0x2B50 <= code <= 0x2B55 or
+            0x1F1E6 <= code <= 0x1F1FF or
+            unicodedata.east_asian_width(char) in ('W', 'F')):
+            width += 2
+        else:
+            width += 1
+    return width
+
+
+def pad_string(text: str, target_width: int, align: str = "left") -> str:
+    """Дополняет строку пробелами до target_width с учетом ее графической ширины."""
+    v_width = get_visual_width(text)
+    needed = max(0, target_width - v_width)
+    if align == "right":
+        return " " * needed + str(text)
+    elif align == "center":
+        left = needed // 2
+        right = needed - left
+        return " " * left + str(text) + " " * right
+    else:  # left
+        return str(text) + " " * needed
+
+
+def build_telegram_table(headers, rows, alignments=None):
+    """
+    Строит моноширинную таблицу с юникод-рамками Telegram (блок ```table).
+    """
+    if not rows:
+        return ""
+    if not alignments:
+        alignments = ["center"] + ["left"] * (len(headers) - 1)
+
+    num_cols = len(headers)
+    col_widths = [get_visual_width(h) for h in headers]
+
+    for row in rows:
+        for i in range(num_cols):
+            val = str(row[i]) if i < len(row) else ""
+            col_widths[i] = max(col_widths[i], get_visual_width(val))
+
+    # Добавляем по 1 пробелу отступа слева и справа
+    col_widths = [w + 2 for w in col_widths]
+
+    def render_row(cells, aligns):
+        formatted = []
+        for cell, w, align in zip(cells, col_widths, aligns):
+            padded = pad_string(str(cell), w - 2, align)
+            formatted.append(f" {padded} ")
+        return "│" + "│".join(formatted) + "│"
+
+    def render_sep(left, mid, right, line_char="─"):
+        parts = [line_char * w for w in col_widths]
+        return left + mid.join(parts) + right
+
+    top_border = render_sep("┌", "┬", "┐")
+    header_row = render_row(headers, ["center"] * num_cols)
+    mid_border = render_sep("├", "┼", "┤")
+    bottom_border = render_sep("└", "┴", "┘")
+
+    body_rows = [render_row(r, alignments) for r in rows]
+
+    table_str = "\n".join([top_border, header_row, mid_border] + body_rows + [bottom_border])
+    return f"```table\n{table_str}\n```"
+
 
 def build_keyboard(items, per_row=3):
     """Строит инлайн-клавиатуру с заданным числом кнопок в ряду."""
@@ -75,26 +152,25 @@ def build_sensor_extra_text(app, name, entity, state):
 
 
 def build_menu_text(app, title, devices, icon_func=None, extra_func=build_device_extra_text):
-    """Универсальный билдер текста для любого меню устройств (в виде Markdown-таблицы)."""
+    """Универсальный билдер текста для любого меню устройств (в виде Telegram Markdown-таблицы)."""
     if icon_func is None:
         icon_func = lambda state: "🟢" if state == "on" else "⚫"
 
     if not devices:
         return title
 
-    table = PrettyTable()
-    table.field_names = ["Статус", "Устройство", "Активность"]
-    table.align = "c"
-    table.set_style(TableStyle.MARKDOWN)
+    headers = ["Статус", "Устройство", "Активность"]
+    rows = []
 
     for name, entity in devices:
         state = app.get_state(entity)
         icon = icon_func(state)
         extra = extra_func(app, name, entity, state) if extra_func else ""
         extra = extra or ""
-        table.add_row([icon, name, extra])
+        rows.append([icon, name, extra])
 
-    return f"{title}\n```{table}\n```"
+    table_code = build_telegram_table(headers, rows, alignments=["center", "left", "left"])
+    return f"{title}\n{table_code}"
 
 
 def build_climate_sensors_text(app, sensor_items):

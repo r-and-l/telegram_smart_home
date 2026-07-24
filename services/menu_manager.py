@@ -121,11 +121,15 @@ class MenuManager:
             "weather": WeatherMenu(app, "weather", CATEGORIES["weather"]["title"]),
         }
 
-        # Регистрация слушателей изменений состояний для всех сущностей в конфиге
+        # Регистрация слушателей изменений состояний и атрибутов для всех сущностей
         for device in DEVICES:
             for entity in self._get_device_entities(device):
                 if entity:
-                    self.app.listen_state(self._entity_state_changed, entity)
+                    self.app.listen_state(self._entity_state_changed, entity, attribute="all")
+
+        # Дополнительно регистрируем слушатель для бризера
+        breather_ent = "fan.xiaomi_mt0_1917_air_fresh"
+        self.app.listen_state(self._entity_state_changed, breather_ent, attribute="all")
 
     def _get_device_entities(self, device):
         """Возвращает список всех сущностей, связанных с устройством"""
@@ -141,14 +145,27 @@ class MenuManager:
         return []
 
     def _entity_state_changed(self, entity, attribute, old, new, kwargs):
-        """Обработчик изменения состояния любой отслеживаемой сущности"""
+        """Обработчик изменения состояния и атрибутов отслеживаемых сущностей"""
         if self.current_menu is None or self.telegram.main_message_id is None:
             return
-            
-        # Если изменившаяся сущность входит в текущее меню, перерисовываем его
-        current_devices = [d for d in DEVICES if d["type"] == self.current_menu]
+
+        if old == new:
+            return
+
+        # 1. Если открыто подменю кондиционера (например ac:climate.xiaomi_mt0_1917_air_conditioner)
+        if self.current_menu.startswith("ac:"):
+            ac_entity = self.current_menu.replace("ac:", "")
+            breather_ent = "fan.xiaomi_mt0_1917_air_fresh"
+            if entity == ac_entity or entity == breather_ent:
+                self.app.log(f"🔄 AC/Breather entity updated ({entity}), re-rendering AC menu")
+                self._render_current_menu()
+                return
+
+        # 2. Если открыто меню категории (lights, climate, blinds, weather)
+        current_devices = [d for d in DEVICES if d.get("type") == self.current_menu]
         for device in current_devices:
             if entity in self._get_device_entities(device):
+                self.app.log(f"🔄 Category device updated ({entity}), re-rendering {self.current_menu} menu")
                 self._render_current_menu()
                 break
 

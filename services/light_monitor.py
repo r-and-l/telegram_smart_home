@@ -12,7 +12,12 @@ class LightMonitor:
         # Слушатели для изменения состояния света
         lights = [d for d in DEVICES if d["type"] == "lights" and d["entity"]]
         for device in lights:
-            self.app.listen_state(self.light_state_changed, device["entity"])
+            entity = device["entity"]
+            self.app.listen_state(self.light_state_changed, entity)
+            # Если свет уже горит при старте бота, запускаем таймер
+            if self.app.get_state(entity) == "on":
+                self.app.log(f"Light {entity} is already ON on startup, starting timer.")
+                self._start_light_timer(entity)
 
     def light_state_changed(self, entity, attribute, old, new, kwargs):
         """Обработчик изменения состояния света"""

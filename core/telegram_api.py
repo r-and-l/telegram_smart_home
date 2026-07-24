@@ -118,16 +118,17 @@ class TelegramAPI:
         }
         if inline_keyboard is not None:
             kwargs["inline_keyboard"] = inline_keyboard
-            
-        if self.chat_id:
-            kwargs["target"] = self.chat_id
 
-        response = self.app.call_service(
-            "telegram_bot/send_message",
-            **kwargs
-        )
-        if response and "result" in response:
-            return response["result"]["response"]["chats"][0]["message_id"]
+        try:
+            self.app.log(f"🔔 SENDING NOTIFICATION...")
+            response = self.app.call_service(
+                "telegram_bot/send_message",
+                **kwargs
+            )
+            if response and "result" in response:
+                return response["result"]["response"]["chats"][0]["message_id"]
+        except Exception as e:
+            self.app.log(f"Error sending notification: {e}")
         return None
 
     def edit_notification(self, message_id, text, inline_keyboard=None, parse_mode="markdown"):
