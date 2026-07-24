@@ -51,7 +51,7 @@ class TelegramAPI:
         self.last_keyboard = None
         self.last_parse_mode = None
 
-    def render_message(self, text, inline_keyboard=None, parse_mode="markdown"):
+    def render_message(self, text, inline_keyboard=None, parse_mode="html"):
         # Предотвращаем отправку запроса, если сообщение не изменилось
         if (self.main_message_id is not None and 
             self.last_text == text and 
@@ -110,7 +110,7 @@ class TelegramAPI:
                 # Рекурсивно вызываем себя же, чтобы отправить новое сообщение
                 self.render_message(text, inline_keyboard, parse_mode)
 
-    def send_notification(self, text, inline_keyboard=None, parse_mode="markdown"):
+    def send_notification(self, text, inline_keyboard=None, parse_mode="html"):
         """Отправляет новое сообщение (например, уведомление), возвращает message_id"""
         kwargs = {
             "message": text,
@@ -131,7 +131,7 @@ class TelegramAPI:
             self.app.log(f"Error sending notification: {e}")
         return None
 
-    def edit_notification(self, message_id, text, inline_keyboard=None, parse_mode="markdown"):
+    def edit_notification(self, message_id, text, inline_keyboard=None, parse_mode="html"):
         """Редактирует или удаляет уведомление"""
         kwargs = {
             "message_id": message_id,

@@ -37,46 +37,24 @@ def pad_string(text: str, target_width: int, align: str = "left") -> str:
         return str(text) + " " * needed
 
 
-def build_telegram_table(headers, rows, alignments=None):
+def build_html_table(headers, rows):
     """
-    Строит моноширинную таблицу с юникод-рамками Telegram (блок ```table).
+    Строит нативную HTML-таблицу Telegram для отображения виджета таблицы с округлыми рамками.
     """
-    if not rows:
-        return ""
-    if not alignments:
-        alignments = ["center"] + ["left"] * (len(headers) - 1)
-
-    num_cols = len(headers)
-    col_widths = [get_visual_width(h) for h in headers]
-
+    lines = ["<table>"]
+    if headers:
+        lines.append("  <tr>")
+        for h in headers:
+            lines.append(f"    <th>{h}</th>")
+        lines.append("  </tr>")
     for row in rows:
-        for i in range(num_cols):
-            val = str(row[i]) if i < len(row) else ""
-            col_widths[i] = max(col_widths[i], get_visual_width(val))
-
-    # Добавляем по 1 пробелу отступа слева и справа
-    col_widths = [w + 2 for w in col_widths]
-
-    def render_row(cells, aligns):
-        formatted = []
-        for cell, w, align in zip(cells, col_widths, aligns):
-            padded = pad_string(str(cell), w - 2, align)
-            formatted.append(f" {padded} ")
-        return "│" + "│".join(formatted) + "│"
-
-    def render_sep(left, mid, right, line_char="─"):
-        parts = [line_char * w for w in col_widths]
-        return left + mid.join(parts) + right
-
-    top_border = render_sep("┌", "┬", "┐")
-    header_row = render_row(headers, ["center"] * num_cols)
-    mid_border = render_sep("├", "┼", "┤")
-    bottom_border = render_sep("└", "┴", "┘")
-
-    body_rows = [render_row(r, alignments) for r in rows]
-
-    table_str = "\n".join([top_border, header_row, mid_border] + body_rows + [bottom_border])
-    return f"```table\n{table_str}\n```"
+        lines.append("  <tr>")
+        for cell in row:
+            val = str(cell) if cell is not None else ""
+            lines.append(f"    <td>{val}</td>")
+        lines.append("  </tr>")
+    lines.append("</table>")
+    return "\n".join(lines)
 
 
 def build_keyboard(items, per_row=3):
@@ -152,12 +130,14 @@ def build_sensor_extra_text(app, name, entity, state):
 
 
 def build_menu_text(app, title, devices, icon_func=None, extra_func=build_device_extra_text):
-    """Универсальный билдер текста для любого меню устройств (в виде Telegram Markdown-таблицы)."""
+    """Универсальный билдер текста для любого меню устройств в виде нативной таблицы Telegram (HTML)."""
     if icon_func is None:
         icon_func = lambda state: "🟢" if state == "on" else "⚫"
 
+    title_html = title.replace("*", "")
+
     if not devices:
-        return title
+        return title_html
 
     headers = ["Статус", "Устройство", "Активность"]
     rows = []
@@ -169,8 +149,8 @@ def build_menu_text(app, title, devices, icon_func=None, extra_func=build_device
         extra = extra or ""
         rows.append([icon, name, extra])
 
-    table_code = build_telegram_table(headers, rows, alignments=["center", "left", "left"])
-    return f"{title}\n{table_code}"
+    table_code = build_html_table(headers, rows)
+    return f"<b>{title_html.strip()}</b>\n\n{table_code}"
 
 
 def build_climate_sensors_text(app, sensor_items):
@@ -178,7 +158,7 @@ def build_climate_sensors_text(app, sensor_items):
     if not sensor_items:
         return ""
         
-    sensor_text = "\n"
+    sensor_text = "\n\n"
     for s in sensor_items:
         name = s["name"]
         entity_data = s.get("entity")
@@ -196,7 +176,7 @@ def build_climate_sensors_text(app, sensor_items):
             if hum_val is not None:
                 parts.append(f"💧 {hum_val}%")
             val_str = " | ".join(parts) if parts else "нет данных"
-            sensor_text += f"**{name}**: {val_str}\n"
+            sensor_text += f"<b>{name}</b>: {val_str}\n"
             
         elif isinstance(entity_data, list):
             vals = []
@@ -211,12 +191,12 @@ def build_climate_sensors_text(app, sensor_items):
                         else:
                             vals.append(str(val))
             val_str = " | ".join(vals) if vals else "нет данных"
-            sensor_text += f"{name}: {val_str}\n"
+            sensor_text += f"<b>{name}</b>: {val_str}\n"
             
         elif isinstance(entity_data, str):
             val = app.get_state(entity_data)
             val_str = str(val) if val is not None else "нет данных"
-            sensor_text += f"{name}: {val_str}\n"
+            sensor_text += f"<b>{name}</b>: {val_str}\n"
             
     return sensor_text
 
@@ -249,18 +229,18 @@ def build_ac_text(name, state, current_temp, target_temp, fan_mode, breather_sta
     mode_text = modes_ru.get(str(state).lower(), str(state))
     fan_text = fan_modes_ru.get(str(fan_mode).lower(), str(fan_mode)) if fan_mode else "нет данных"
     
-    text = f"⚙️ **Управление: {name}**\n\n"
-    text += f"**Режим:** {mode_text}\n"
+    text = f"⚙️ <b>Управление: {name}</b>\n\n"
+    text += f"<b>Режим:</b> {mode_text}\n"
     if current_temp is not None:
-        text += f"**В комнате:** {current_temp}°C\n"
+        text += f"<b>В комнате:</b> {current_temp}°C\n"
     if target_temp is not None:
-        text += f"**Установлено:** {target_temp}°C\n"
-    text += f"**Вентилятор:** {fan_text}\n"
+        text += f"<b>Установлено:</b> {target_temp}°C\n"
+    text += f"<b>Вентилятор:</b> {fan_text}\n"
     
     if breather_state:
         b_state_ru = "Вкл" if breather_state == "on" else "Выкл"
         b_mode_ru = fan_modes_ru.get(str(breather_mode).lower(), str(breather_mode)) if breather_mode else ""
-        text += f"**Бризер:** {b_state_ru} {b_mode_ru}\n"
+        text += f"<b>Бризер:</b> {b_state_ru} {b_mode_ru}\n"
         
     return text
 

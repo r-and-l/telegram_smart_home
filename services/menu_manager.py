@@ -40,7 +40,7 @@ class TableMenu(Menu):
         buttons.append(("⬅️ Назад", "/back"))
         inline_keyboard = build_keyboard(buttons, 3)
         
-        return text, inline_keyboard, "markdown"
+        return text, inline_keyboard, "html"
 
 
 class ClimateMenu(TableMenu):
@@ -104,7 +104,7 @@ class ACMenu(Menu):
         text = build_ac_text(name, state, current_temp, target_temp, fan_mode, breather_state, breather_mode)
         inline_keyboard = build_ac_keyboard(self.entity_id)
         
-        return text, inline_keyboard, "markdown"
+        return text, inline_keyboard, "html"
 
 
 class MenuManager:
@@ -173,8 +173,9 @@ class MenuManager:
         """Показывает главное меню"""
         self.current_menu = None
         self.telegram.render_message(
-            text="🏠 *Умный дом*\n\nВыбери раздел:",
-            inline_keyboard=MAIN_KEYBOARD_INLINE
+            text="🏠 <b>Умный дом</b>\n\nВыбери раздел:",
+            inline_keyboard=MAIN_KEYBOARD_INLINE,
+            parse_mode="html"
         )
 
     def show_menu(self, category):
