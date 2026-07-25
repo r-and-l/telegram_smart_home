@@ -32,8 +32,9 @@ def build_rich_paragraph(text):
 
 
 def build_rich_section_heading(text):
-    """Строит блок InputRichBlockSectionHeading для Telegram sendRichMessage API."""
-    return {"type": "section_heading", "text": text}
+    """Строит заголовок как блок paragraph для Telegram sendRichMessage API."""
+    return {"type": "paragraph", "text": text}
+
 
 
 def build_keyboard(items, per_row=3):
