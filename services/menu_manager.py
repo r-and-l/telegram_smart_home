@@ -4,6 +4,7 @@ from ui.views import (
     build_menu_rich_blocks,
     build_sensor_extra_text,
     build_climate_sensors_text,
+    build_climate_sensors_rich_blocks,
     build_rich_paragraph,
     build_rich_section_heading,
 )
@@ -47,18 +48,18 @@ class TableMenu(Menu):
 
 
 class ClimateMenu(TableMenu):
-    """Климатическое меню с таблицей управления и списком датчиков под ней"""
+    """Климатическое меню с таблицей управления и таблицей датчиков под ней"""
     def render(self):
         blocks, fallback_text, inline_keyboard, parse_mode = super().render()
         
         items = [d for d in DEVICES if d["type"] == self.category]
         sensor_items = [d for d in items if d.get("is_sensor")]
         
-        sensor_text = build_climate_sensors_text(self.app, sensor_items)
-        if sensor_text:
-            fallback_text += sensor_text
-            # Добавляем датчики как параграф в rich blocks
-            blocks.append(build_rich_paragraph(sensor_text.strip()))
+        sensor_block, sensor_fallback = build_climate_sensors_rich_blocks(self.app, sensor_items)
+        if sensor_block:
+            blocks.append(build_rich_paragraph("🌡️ <b>Датчики</b>"))
+            blocks.append(sensor_block)
+            fallback_text += sensor_fallback
             
         return blocks, fallback_text, inline_keyboard, parse_mode
 
@@ -94,9 +95,10 @@ class WeatherMenu(Menu):
 
 class ACMenu(Menu):
     """Меню управления кондиционером"""
-    def __init__(self, app, entity_id):
+    def __init__(self, app, entity_id, sub_menu=None):
         self.app = app
         self.entity_id = entity_id
+        self.sub_menu = sub_menu
         
     def render(self):
         # Находим имя кондиционера в конфиге
@@ -119,7 +121,7 @@ class ACMenu(Menu):
         
         blocks = build_ac_rich_blocks(name, state, current_temp, target_temp, fan_mode, breather_state, breather_mode)
         fallback_text = build_ac_text(name, state, current_temp, target_temp, fan_mode, breather_state, breather_mode)
-        inline_keyboard = build_ac_keyboard(self.entity_id)
+        inline_keyboard = build_ac_keyboard(self.entity_id, sub_menu=self.sub_menu)
         
         return blocks, fallback_text, inline_keyboard, "html"
 
@@ -169,9 +171,9 @@ class MenuManager:
         if old == new:
             return
 
-        # 1. Если открыто подменю кондиционера (например ac:climate.xiaomi_mt0_1917_air_conditioner)
-        if self.current_menu.startswith("ac:"):
-            ac_entity = self.current_menu.replace("ac:", "")
+        # 1. Если открыто подменю кондиционера или бризера
+        if self.current_menu.startswith("ac:") or self.current_menu.startswith("ac_breather:"):
+            ac_entity = self.current_menu.replace("ac_breather:", "").replace("ac:", "")
             breather_ent = "fan.xiaomi_mt0_1917_air_fresh"
             if entity == ac_entity or entity == breather_ent:
                 self.app.log(f"🔄 AC/Breather entity updated ({entity}), re-rendering AC menu")
@@ -207,6 +209,11 @@ class MenuManager:
         self.current_menu = f"ac:{entity_id}"
         self._render_current_menu()
 
+    def show_ac_breather_menu(self, entity_id):
+        """Отображает подменю управления бризером"""
+        self.current_menu = f"ac_breather:{entity_id}"
+        self._render_current_menu()
+
     def auto_update(self, kwargs):
         """Обновляет сообщение раз в минуту, если в текущем меню горит свет (для обновления таймеров)"""
         if self.current_menu is None or self.telegram.main_message_id is None:
@@ -223,9 +230,12 @@ class MenuManager:
 
     def _render_current_menu(self):
         """Рендерит текущее открытое меню через соответствующий класс"""
-        if self.current_menu.startswith("ac:"):
+        if self.current_menu.startswith("ac_breather:"):
+            entity_id = self.current_menu.replace("ac_breather:", "")
+            menu = ACMenu(self.app, entity_id, sub_menu="breather")
+        elif self.current_menu.startswith("ac:"):
             entity_id = self.current_menu.replace("ac:", "")
-            menu = ACMenu(self.app, entity_id)
+            menu = ACMenu(self.app, entity_id, sub_menu=None)
         else:
             menu = self.menus.get(self.current_menu)
             

@@ -25,7 +25,11 @@ class Router:
         self.app.log(f"🔘 RECEIVED CALLBACK: {command} (chat: {chat_id})")
         self.telegram.update_chat_id(chat_id)
         
-        if command.startswith("/menu:ac:"):
+        if command.startswith("/menu:ac_breather:"):
+            entity_id = command.replace("/menu:ac_breather:", "")
+            self.menu_manager.show_ac_breather_menu(entity_id)
+
+        elif command.startswith("/menu:ac:"):
             entity_id = command.replace("/menu:ac:", "")
             self.menu_manager.show_ac_menu(entity_id)
 
@@ -90,7 +94,7 @@ class Router:
                     if mode != "on":
                         self.app.call_service("fan/set_preset_mode", entity_id=breather_ent, preset_mode=mode)
             if self.menu_manager.current_menu:
-                self.menu_manager.show_ac_menu(entity)
+                self.menu_manager._render_current_menu()
         
         elif command.startswith("/toggle:"):
             entity = command.replace("/toggle:", "")

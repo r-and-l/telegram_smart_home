@@ -194,6 +194,70 @@ def build_climate_sensors_text(app, sensor_items):
             
     return sensor_text
 
+def build_climate_sensors_rich_blocks(app, sensor_items):
+    """
+    Строит таблицу rich-блоков для датчиков климата.
+    Возвращает (table_block, fallback_text).
+    """
+    if not sensor_items:
+        return None, ""
+
+    headers = ["Датчик", "Температура", "Влажность"]
+    rows = []
+    fallback_lines = ["\n<b>Датчики:</b>"]
+
+    for s in sensor_items:
+        name = s["name"]
+        entity_data = s.get("entity")
+
+        temp_str = "—"
+        hum_str = "—"
+
+        if isinstance(entity_data, dict):
+            temp_entity = entity_data.get("temperature")
+            hum_entity = entity_data.get("humidity")
+
+            temp_val = app.get_state(temp_entity) if temp_entity else None
+            hum_val = app.get_state(hum_entity) if hum_entity else None
+
+            if temp_val is not None:
+                temp_str = f"🌡️ {temp_val}°C"
+            if hum_val is not None:
+                hum_str = f"💧 {hum_val}%"
+
+            rows.append([name, temp_str, hum_str])
+            fallback_lines.append(f"• {name}: {temp_str} | {hum_str}")
+
+        elif isinstance(entity_data, list):
+            vals = []
+            for ent in entity_data:
+                if isinstance(ent, str):
+                    val = app.get_state(ent)
+                    if val is not None:
+                        if "temp" in ent or "temperatura" in ent:
+                            temp_str = f"🌡️ {val}°C"
+                        elif "vlag" in ent or "vlazhnost" in ent or "hum" in ent:
+                            hum_str = f"💧 {val}%"
+                        else:
+                            vals.append(str(val))
+            if vals:
+                rows.append([name, ", ".join(vals), "—"])
+            else:
+                rows.append([name, temp_str, hum_str])
+            fallback_lines.append(f"• {name}: {temp_str} | {hum_str}")
+
+        elif isinstance(entity_data, str):
+            val = app.get_state(entity_data)
+            val_str = str(val) if val is not None else "нет данных"
+            rows.append([name, val_str, "—"])
+            fallback_lines.append(f"• {name}: {val_str}")
+
+    table_block = build_rich_table_block(headers, rows, is_bordered=True, is_striped=True)
+    fallback_text = "\n".join(fallback_lines)
+
+    return table_block, fallback_text
+
+
 def build_ac_text(name, state, current_temp, target_temp, fan_mode, breather_state=None, breather_mode=None):
     """Строит текст для подменю кондиционера"""
     modes_ru = {
@@ -287,8 +351,25 @@ def build_ac_rich_blocks(name, state, current_temp, target_temp, fan_mode, breat
     ]
 
 
-def build_ac_keyboard(entity_id):
-    """Строит клавиатуру для пульта кондиционера"""
+def build_ac_keyboard(entity_id, sub_menu=None):
+    """Строит клавиатуру для пульта кондиционера (основную или подменю бризера)"""
+    if sub_menu == "breather":
+        return [
+            [
+                ("🍃 Вкл", f"/ac:breather:{entity_id}:on"),
+                ("🛑 Выкл", f"/ac:breather:{entity_id}:off"),
+                ("🍃 Авт", f"/ac:breather:{entity_id}:auto"),
+            ],
+            [
+                ("🍃 1 (Слаб)", f"/ac:breather:{entity_id}:level1"),
+                ("🍃 3 (Средн)", f"/ac:breather:{entity_id}:level3"),
+                ("🍃 5 (Сильн)", f"/ac:breather:{entity_id}:level5"),
+            ],
+            [
+                ("⬅️ Назад к кондиционеру", f"/menu:ac:{entity_id}")
+            ]
+        ]
+
     return [
         [
             ("❄️ Охл", f"/ac:mode:{entity_id}:cool"),
@@ -310,11 +391,7 @@ def build_ac_keyboard(entity_id):
             ("Сильн", f"/ac:fan:{entity_id}:level7"),
         ],
         [
-            ("🍃 Выкл", f"/ac:breather:{entity_id}:off"),
-            ("🍃 Авт", f"/ac:breather:{entity_id}:auto"),
-            ("🍃 1", f"/ac:breather:{entity_id}:level1"),
-            ("🍃 3", f"/ac:breather:{entity_id}:level3"),
-            ("🍃 5", f"/ac:breather:{entity_id}:level5"),
+            ("🍃 Бризер ▸", f"/menu:ac_breather:{entity_id}")
         ],
         [
             ("⬅️ Назад в Климат", "/menu:climate")
