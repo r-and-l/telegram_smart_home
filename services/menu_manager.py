@@ -121,7 +121,7 @@ class ACMenu(Menu):
         
         blocks = build_ac_rich_blocks(name, state, current_temp, target_temp, fan_mode, breather_state, breather_mode)
         fallback_text = build_ac_text(name, state, current_temp, target_temp, fan_mode, breather_state, breather_mode)
-        inline_keyboard = build_ac_keyboard(self.entity_id, sub_menu=self.sub_menu)
+        inline_keyboard = build_ac_keyboard(self.entity_id, sub_menu=self.sub_menu, state=state)
         
         return blocks, fallback_text, inline_keyboard, "html"
 

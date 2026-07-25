@@ -41,6 +41,19 @@ class Router:
             category = command.replace("/menu:", "")
             self.menu_manager.show_menu(category)
             
+        elif command.startswith("/ac:toggle:"):
+            # format: /ac:toggle:climate.entity_id:on
+            parts = command.split(":")
+            if len(parts) == 4:
+                entity = parts[2]
+                action = parts[3]
+                if action == "on":
+                    self.app.call_service("climate/turn_on", entity_id=entity)
+                else:
+                    self.app.call_service("climate/turn_off", entity_id=entity)
+            if self.menu_manager.current_menu:
+                self.menu_manager._render_current_menu()
+
         elif command.startswith("/ac:mode:"):
             # format: /ac:mode:climate.entity_id:cool
             parts = command.split(":")

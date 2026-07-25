@@ -357,7 +357,7 @@ def build_ac_rich_blocks(name, state, current_temp, target_temp, fan_mode, breat
     ]
 
 
-def build_ac_keyboard(entity_id, sub_menu=None):
+def build_ac_keyboard(entity_id, sub_menu=None, state="off"):
     """Строит клавиатуру для пульта кондиционера (основную, режимов или подменю бризера)"""
     if sub_menu == "modes":
         return [
@@ -394,10 +394,16 @@ def build_ac_keyboard(entity_id, sub_menu=None):
             ]
         ]
 
+    # Динамическая кнопка вкл/выкл в зависимости от статуса кондиционера
+    if str(state).lower() == "off":
+        power_btn = ("🟢 Включить", f"/ac:toggle:{entity_id}:on")
+    else:
+        power_btn = ("🛑 Выключить", f"/ac:toggle:{entity_id}:off")
+
     return [
         [
             ("⚙️ Режимы ▸", f"/menu:ac_modes:{entity_id}"),
-            ("🛑 Выкл", f"/ac:mode:{entity_id}:off"),
+            power_btn,
         ],
         [
             ("➖ Меньше", f"/ac:temp:{entity_id}:down"),
