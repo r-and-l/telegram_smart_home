@@ -57,7 +57,7 @@ class ClimateMenu(TableMenu):
         
         sensor_block, sensor_fallback = build_climate_sensors_rich_blocks(self.app, sensor_items)
         if sensor_block:
-            blocks.append(build_rich_paragraph("🌡️ <b>Датчики</b>"))
+            blocks.append(build_rich_paragraph("🌡️ Датчики"))
             blocks.append(sensor_block)
             fallback_text += sensor_fallback
             
@@ -209,6 +209,11 @@ class MenuManager:
         self.current_menu = f"ac:{entity_id}"
         self._render_current_menu()
 
+    def show_ac_modes_menu(self, entity_id):
+        """Отображает подменю выбора режимов кондиционера"""
+        self.current_menu = f"ac_modes:{entity_id}"
+        self._render_current_menu()
+
     def show_ac_breather_menu(self, entity_id):
         """Отображает подменю управления бризером"""
         self.current_menu = f"ac_breather:{entity_id}"
@@ -230,7 +235,10 @@ class MenuManager:
 
     def _render_current_menu(self):
         """Рендерит текущее открытое меню через соответствующий класс"""
-        if self.current_menu.startswith("ac_breather:"):
+        if self.current_menu.startswith("ac_modes:"):
+            entity_id = self.current_menu.replace("ac_modes:", "")
+            menu = ACMenu(self.app, entity_id, sub_menu="modes")
+        elif self.current_menu.startswith("ac_breather:"):
             entity_id = self.current_menu.replace("ac_breather:", "")
             menu = ACMenu(self.app, entity_id, sub_menu="breather")
         elif self.current_menu.startswith("ac:"):
@@ -249,3 +257,4 @@ class MenuManager:
             parse_mode=parse_mode,
             rich_blocks=blocks
         )
+

@@ -25,7 +25,11 @@ class Router:
         self.app.log(f"🔘 RECEIVED CALLBACK: {command} (chat: {chat_id})")
         self.telegram.update_chat_id(chat_id)
         
-        if command.startswith("/menu:ac_breather:"):
+        if command.startswith("/menu:ac_modes:"):
+            entity_id = command.replace("/menu:ac_modes:", "")
+            self.menu_manager.show_ac_modes_menu(entity_id)
+
+        elif command.startswith("/menu:ac_breather:"):
             entity_id = command.replace("/menu:ac_breather:", "")
             self.menu_manager.show_ac_breather_menu(entity_id)
 
@@ -44,15 +48,14 @@ class Router:
                 entity = parts[2]
                 mode = parts[3]
                 
-                # Специальная обработка бризера (fresh_air). В miot это может быть либо preset_mode, либо отдельный switch.
-                # Для начала попробуем передать как preset_mode, если это не поможет — пользователь сможет адаптировать логику.
                 if mode == "fresh_air":
                     self.app.call_service("climate/set_preset_mode", entity_id=entity, preset_mode="fresh_air")
                 else:
                     self.app.call_service("climate/set_hvac_mode", entity_id=entity, hvac_mode=mode)
                     
             if self.menu_manager.current_menu:
-                self.menu_manager.show_ac_menu(entity)
+                self.menu_manager._render_current_menu()
+
                 
         elif command.startswith("/ac:temp:"):
             # format: /ac:temp:climate.entity_id:up

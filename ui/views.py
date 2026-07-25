@@ -204,11 +204,17 @@ def build_climate_sensors_rich_blocks(app, sensor_items):
 
     headers = ["Датчик", "Температура", "Влажность"]
     rows = []
-    fallback_lines = ["\n<b>Датчики:</b>"]
+    fallback_lines = ["\nДатчики:"]
 
     for s in sensor_items:
-        name = s["name"]
+        raw_name = s["name"]
         entity_data = s.get("entity")
+
+        clean_name = raw_name.replace("Т в ", "").replace("Т ", "").strip().capitalize()
+        if "туалет" in clean_name.lower() and "🚽" not in clean_name:
+            clean_name = f"🚽 {clean_name}"
+        elif "ванн" in clean_name.lower() and "🛁" not in clean_name:
+            clean_name = f"🛁 {clean_name}"
 
         temp_str = "—"
         hum_str = "—"
@@ -225,8 +231,8 @@ def build_climate_sensors_rich_blocks(app, sensor_items):
             if hum_val is not None:
                 hum_str = f"💧 {hum_val}%"
 
-            rows.append([name, temp_str, hum_str])
-            fallback_lines.append(f"• {name}: {temp_str} | {hum_str}")
+            rows.append([clean_name, temp_str, hum_str])
+            fallback_lines.append(f"• {clean_name}: {temp_str} | {hum_str}")
 
         elif isinstance(entity_data, list):
             vals = []
@@ -241,16 +247,16 @@ def build_climate_sensors_rich_blocks(app, sensor_items):
                         else:
                             vals.append(str(val))
             if vals:
-                rows.append([name, ", ".join(vals), "—"])
+                rows.append([clean_name, ", ".join(vals), "—"])
             else:
-                rows.append([name, temp_str, hum_str])
-            fallback_lines.append(f"• {name}: {temp_str} | {hum_str}")
+                rows.append([clean_name, temp_str, hum_str])
+            fallback_lines.append(f"• {clean_name}: {temp_str} | {hum_str}")
 
         elif isinstance(entity_data, str):
             val = app.get_state(entity_data)
             val_str = str(val) if val is not None else "нет данных"
-            rows.append([name, val_str, "—"])
-            fallback_lines.append(f"• {name}: {val_str}")
+            rows.append([clean_name, val_str, "—"])
+            fallback_lines.append(f"• {clean_name}: {val_str}")
 
     table_block = build_rich_table_block(headers, rows, is_bordered=True, is_striped=True)
     fallback_text = "\n".join(fallback_lines)
@@ -352,7 +358,24 @@ def build_ac_rich_blocks(name, state, current_temp, target_temp, fan_mode, breat
 
 
 def build_ac_keyboard(entity_id, sub_menu=None):
-    """Строит клавиатуру для пульта кондиционера (основную или подменю бризера)"""
+    """Строит клавиатуру для пульта кондиционера (основную, режимов или подменю бризера)"""
+    if sub_menu == "modes":
+        return [
+            [
+                ("❄️ Охлаждение", f"/ac:mode:{entity_id}:cool"),
+                ("☀️ Обогрев", f"/ac:mode:{entity_id}:heat"),
+            ],
+            [
+                ("💧 Осушение", f"/ac:mode:{entity_id}:dry"),
+                ("💨 Вентилятор", f"/ac:mode:{entity_id}:fan_only"),
+                ("🤖 Авто", f"/ac:mode:{entity_id}:auto"),
+            ],
+            [
+                ("⬅️ Назад к кондиционеру", f"/menu:ac:{entity_id}"),
+                ("🏠 Главная", "/back"),
+            ]
+        ]
+
     if sub_menu == "breather":
         return [
             [
@@ -366,18 +389,14 @@ def build_ac_keyboard(entity_id, sub_menu=None):
                 ("🍃 5 (Сильн)", f"/ac:breather:{entity_id}:level5"),
             ],
             [
-                ("⬅️ Назад к кондиционеру", f"/menu:ac:{entity_id}")
+                ("⬅️ Назад к кондиционеру", f"/menu:ac:{entity_id}"),
+                ("🏠 Главная", "/back"),
             ]
         ]
 
     return [
         [
-            ("❄️ Охл", f"/ac:mode:{entity_id}:cool"),
-            ("☀️ Нагрев", f"/ac:mode:{entity_id}:heat"),
-            ("💨 Вент", f"/ac:mode:{entity_id}:fan_only"),
-        ],
-        [
-            ("💧 Осуш", f"/ac:mode:{entity_id}:dry"),
+            ("⚙️ Режимы ▸", f"/menu:ac_modes:{entity_id}"),
             ("🛑 Выкл", f"/ac:mode:{entity_id}:off"),
         ],
         [
@@ -385,15 +404,17 @@ def build_ac_keyboard(entity_id, sub_menu=None):
             ("➕ Больше", f"/ac:temp:{entity_id}:up"),
         ],
         [
-            ("Авт", f"/ac:fan:{entity_id}:auto"),
-            ("Слаб", f"/ac:fan:{entity_id}:level1"),
-            ("Ср", f"/ac:fan:{entity_id}:level4"),
-            ("Сильн", f"/ac:fan:{entity_id}:level7"),
+            ("💨 Авт", f"/ac:fan:{entity_id}:auto"),
+            ("💨 Слаб", f"/ac:fan:{entity_id}:level1"),
+            ("💨 Ср", f"/ac:fan:{entity_id}:level4"),
+            ("💨 Сильн", f"/ac:fan:{entity_id}:level7"),
         ],
         [
-            ("🍃 Бризер ▸", f"/menu:ac_breather:{entity_id}")
+            ("🍃 Бризер ▸", f"/menu:ac_breather:{entity_id}"),
         ],
         [
-            ("⬅️ Назад в Климат", "/menu:climate")
+            ("⬅️ Назад в Климат", "/menu:climate"),
+            ("🏠 Главная", "/back"),
         ]
     ]
+
