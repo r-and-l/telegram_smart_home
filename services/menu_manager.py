@@ -1,9 +1,11 @@
 from config import DEVICES, CATEGORIES
 from ui.views import (
     build_keyboard,
-    build_menu_text,
+    build_menu_rich_blocks,
     build_sensor_extra_text,
     build_climate_sensors_text,
+    build_rich_paragraph,
+    build_rich_section_heading,
 )
 from ui.keyboards import MAIN_KEYBOARD_INLINE
 
@@ -15,7 +17,7 @@ class Menu:
         self.title = title
 
     def render(self):
-        """Возвращает кортеж (text, inline_keyboard, parse_mode)"""
+        """Возвращает кортеж (rich_blocks, fallback_text, inline_keyboard, parse_mode)"""
         raise NotImplementedError
 
 
@@ -29,7 +31,8 @@ class TableMenu(Menu):
             if d.get("entity") and isinstance(d.get("entity"), str)
         ]
         
-        text = build_menu_text(self.app, self.title, control_devices)
+        blocks, fallback_text = build_menu_rich_blocks(self.app, self.title, control_devices)
+        
         buttons = []
         for name, entity in control_devices:
             if entity.startswith("climate."):
@@ -40,19 +43,24 @@ class TableMenu(Menu):
         buttons.append(("⬅️ Назад", "/back"))
         inline_keyboard = build_keyboard(buttons, 3)
         
-        return text, inline_keyboard, "html"
+        return blocks, fallback_text, inline_keyboard, "html"
 
 
 class ClimateMenu(TableMenu):
     """Климатическое меню с таблицей управления и списком датчиков под ней"""
     def render(self):
-        text, inline_keyboard, parse_mode = super().render()
+        blocks, fallback_text, inline_keyboard, parse_mode = super().render()
         
         items = [d for d in DEVICES if d["type"] == self.category]
         sensor_items = [d for d in items if d.get("is_sensor")]
         
-        text += build_climate_sensors_text(self.app, sensor_items)
-        return text, inline_keyboard, parse_mode
+        sensor_text = build_climate_sensors_text(self.app, sensor_items)
+        if sensor_text:
+            fallback_text += sensor_text
+            # Добавляем датчики как параграф в rich blocks
+            blocks.append(build_rich_paragraph(sensor_text.strip()))
+            
+        return blocks, fallback_text, inline_keyboard, parse_mode
 
 
 class WeatherMenu(Menu):
@@ -65,16 +73,23 @@ class WeatherMenu(Menu):
             if d.get("entity") and isinstance(d.get("entity"), str)
         ]
         
-        text = self.title.replace("*", "").replace("\n\n", "\n")
+        clean_title = self.title.replace("*", "").replace("\n\n", "\n").strip()
+
+        # Rich blocks: заголовок + строки датчиков
+        blocks = [build_rich_section_heading(clean_title)]
+        
+        # Fallback text
+        text = clean_title + "\n"
         for name, entity in devices:
             state = self.app.get_state(entity)
             value = build_sensor_extra_text(self.app, name, entity, state)
-            text += f"{name}: <code>{value}</code>\n"
+            text += f"{name}: {value}\n"
+            blocks.append(build_rich_paragraph(f"{name}: {value}"))
             
         buttons = [("⬅️ Назад", "/back")]
         inline_keyboard = build_keyboard(buttons, 2)
         
-        return text, inline_keyboard, "html"
+        return blocks, text, inline_keyboard, "html"
 
 
 class ACMenu(Menu):
@@ -100,11 +115,13 @@ class ACMenu(Menu):
         breather_state = self.app.get_state(breather_ent)
         breather_mode = self.app.get_state(breather_ent, attribute="preset_mode")
         
-        from ui.views import build_ac_text, build_ac_keyboard
-        text = build_ac_text(name, state, current_temp, target_temp, fan_mode, breather_state, breather_mode)
+        from ui.views import build_ac_text, build_ac_keyboard, build_ac_rich_blocks
+        
+        blocks = build_ac_rich_blocks(name, state, current_temp, target_temp, fan_mode, breather_state, breather_mode)
+        fallback_text = build_ac_text(name, state, current_temp, target_temp, fan_mode, breather_state, breather_mode)
         inline_keyboard = build_ac_keyboard(self.entity_id)
         
-        return text, inline_keyboard, "html"
+        return blocks, fallback_text, inline_keyboard, "html"
 
 
 class MenuManager:
@@ -172,10 +189,12 @@ class MenuManager:
     def show_main_menu(self):
         """Показывает главное меню"""
         self.current_menu = None
+        blocks = [build_rich_section_heading("🏠 Умный дом"), build_rich_paragraph("Выбери раздел:")]
         self.telegram.render_message(
             text="🏠 <b>Умный дом</b>\n\nВыбери раздел:",
             inline_keyboard=MAIN_KEYBOARD_INLINE,
-            parse_mode="html"
+            parse_mode="html",
+            rich_blocks=blocks
         )
 
     def show_menu(self, category):
@@ -213,5 +232,10 @@ class MenuManager:
         if not menu:
             return
             
-        text, inline_keyboard, parse_mode = menu.render()
-        self.telegram.render_message(text=text, inline_keyboard=inline_keyboard, parse_mode=parse_mode)
+        blocks, fallback_text, inline_keyboard, parse_mode = menu.render()
+        self.telegram.render_message(
+            text=fallback_text,
+            inline_keyboard=inline_keyboard,
+            parse_mode=parse_mode,
+            rich_blocks=blocks
+        )

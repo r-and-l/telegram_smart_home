@@ -1,60 +1,39 @@
-import unicodedata
+
 from datetime import datetime
 from ui.translations import WEATHER_TRANSLATIONS, MOON_PHASES
 
-def get_visual_width(text: str) -> int:
-    """Расчет визуальной ширины строки в моноширинном шрифте Telegram с учетом эмодзи."""
-    width = 0
-    for char in str(text):
-        if char in ('\ufe0f', '\ufe0e', '\u200d'):
-            continue
-        code = ord(char)
-        if (0x1F300 <= code <= 0x1F9FF or
-            0x2600 <= code <= 0x27BF or
-            0x1F600 <= code <= 0x1F64F or
-            0x1F680 <= code <= 0x1F6FF or
-            0x2300 <= code <= 0x23FF or
-            0x2B50 <= code <= 0x2B55 or
-            0x1F1E6 <= code <= 0x1F1FF or
-            unicodedata.east_asian_width(char) in ('W', 'F')):
-            width += 2
-        else:
-            width += 1
-    return width
 
-
-def pad_string(text: str, target_width: int, align: str = "left") -> str:
-    """Дополняет строку пробелами до target_width с учетом ее графической ширины."""
-    v_width = get_visual_width(text)
-    needed = max(0, target_width - v_width)
-    if align == "right":
-        return " " * needed + str(text)
-    elif align == "center":
-        left = needed // 2
-        right = needed - left
-        return " " * left + str(text) + " " * right
-    else:  # left
-        return str(text) + " " * needed
-
-
-def build_html_table(headers, rows):
+def build_rich_table_block(headers, rows, is_bordered=True, is_striped=True):
     """
-    Строит нативную HTML-таблицу Telegram для отображения виджета таблицы с округлыми рамками.
+    Строит блок InputRichBlockTable для Telegram sendRichMessage API.
+    Возвращает dict (один блок) для массива blocks.
     """
-    lines = ["<table>"]
+    cells = []
+    # Заголовки
     if headers:
-        lines.append("  <tr>")
-        for h in headers:
-            lines.append(f"    <th>{h}</th>")
-        lines.append("  </tr>")
+        header_row = [{"text": h, "is_header": True} for h in headers]
+        cells.append(header_row)
+    # Данные
     for row in rows:
-        lines.append("  <tr>")
-        for cell in row:
-            val = str(cell) if cell is not None else ""
-            lines.append(f"    <td>{val}</td>")
-        lines.append("  </tr>")
-    lines.append("</table>")
-    return "\n".join(lines)
+        data_row = [{"text": str(cell) if cell else ""} for cell in row]
+        cells.append(data_row)
+
+    return {
+        "type": "table",
+        "is_bordered": is_bordered,
+        "is_striped": is_striped,
+        "cells": cells
+    }
+
+
+def build_rich_paragraph(text):
+    """Строит блок InputRichBlockParagraph для Telegram sendRichMessage API."""
+    return {"type": "paragraph", "text": text}
+
+
+def build_rich_section_heading(text):
+    """Строит блок InputRichBlockSectionHeading для Telegram sendRichMessage API."""
+    return {"type": "section_heading", "text": text}
 
 
 def build_keyboard(items, per_row=3):
@@ -129,17 +108,21 @@ def build_sensor_extra_text(app, name, entity, state):
     return str(state)
 
 
-def build_menu_text(app, title, devices, icon_func=None, extra_func=build_device_extra_text):
-    """Универсальный билдер текста для любого меню устройств в виде нативной таблицы Telegram (HTML)."""
+def build_menu_rich_blocks(app, title, devices, icon_func=None, extra_func=build_device_extra_text):
+    """
+    Строит список rich-блоков для меню устройств (заголовок + таблица).
+    Возвращает (blocks, fallback_text).
+    """
     if icon_func is None:
         icon_func = lambda state: "🟢" if state == "on" else "⚫"
 
-    title_html = title.replace("*", "")
+    clean_title = title.replace("*", "").strip()
 
     if not devices:
-        return title_html
+        blocks = [build_rich_section_heading(clean_title)]
+        return blocks, clean_title
 
-    headers = ["Статус", "Устройство", "Активность"]
+    headers = ["", "Устройство", "Активность"]
     rows = []
 
     for name, entity in devices:
@@ -149,8 +132,18 @@ def build_menu_text(app, title, devices, icon_func=None, extra_func=build_device
         extra = extra or ""
         rows.append([icon, name, extra])
 
-    table_code = build_html_table(headers, rows)
-    return f"<b>{title_html.strip()}</b>\n\n{table_code}"
+    blocks = [
+        build_rich_section_heading(clean_title),
+        build_rich_table_block(headers, rows)
+    ]
+    
+    # Fallback текст для случая когда Rich API недоступен
+    fallback_lines = [f"<b>{clean_title}</b>\n"]
+    for row in rows:
+        fallback_lines.append(f"{row[0]} {row[1]}  {row[2]}")
+    fallback_text = "\n".join(fallback_lines)
+    
+    return blocks, fallback_text
 
 
 def build_climate_sensors_text(app, sensor_items):
@@ -243,6 +236,55 @@ def build_ac_text(name, state, current_temp, target_temp, fan_mode, breather_sta
         text += f"<b>Бризер:</b> {b_state_ru} {b_mode_ru}\n"
         
     return text
+
+def build_ac_rich_blocks(name, state, current_temp, target_temp, fan_mode, breather_state=None, breather_mode=None):
+    """Строит rich-блоки для подменю кондиционера"""
+    modes_ru = {
+        "off": "🛑 Выключен",
+        "cool": "❄️ Охлаждение",
+        "heat": "☀️ Обогрев",
+        "dry": "💧 Осушение",
+        "fan_only": "💨 Вентилятор",
+        "auto": "🤖 Авто"
+    }
+    fan_modes_ru = {
+        "auto": "Авто",
+        "low": "Низкая",
+        "medium": "Средняя",
+        "high": "Высокая",
+        "silent": "Тихий",
+        "turbo": "Турбо",
+        "level1": "Скорость 1 (Мин)",
+        "level2": "Скорость 2",
+        "level3": "Скорость 3",
+        "level4": "Скорость 4 (Средн)",
+        "level5": "Скорость 5",
+        "level6": "Скорость 6",
+        "level7": "Скорость 7 (Макс)",
+    }
+    
+    mode_text = modes_ru.get(str(state).lower(), str(state))
+    fan_text = fan_modes_ru.get(str(fan_mode).lower(), str(fan_mode)) if fan_mode else "нет данных"
+    
+    rows = [
+        ["Режим", mode_text],
+    ]
+    if current_temp is not None:
+        rows.append(["В комнате", f"{current_temp}°C"])
+    if target_temp is not None:
+        rows.append(["Установлено", f"{target_temp}°C"])
+    rows.append(["Вентилятор", fan_text])
+    
+    if breather_state:
+        b_state_ru = "Вкл" if breather_state == "on" else "Выкл"
+        b_mode_ru = fan_modes_ru.get(str(breather_mode).lower(), str(breather_mode)) if breather_mode else ""
+        rows.append(["Бризер", f"{b_state_ru} {b_mode_ru}".strip()])
+    
+    return [
+        build_rich_section_heading(f"⚙️ Управление: {name}"),
+        build_rich_table_block(["Параметр", "Значение"], rows, is_bordered=True, is_striped=True)
+    ]
+
 
 def build_ac_keyboard(entity_id):
     """Строит клавиатуру для пульта кондиционера"""
