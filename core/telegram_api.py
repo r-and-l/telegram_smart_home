@@ -1,5 +1,7 @@
 import json
 import os
+import urllib.request
+import urllib.error
 from config import TELEGRAM_CONFIG
 
 class TelegramAPI:
@@ -9,10 +11,12 @@ class TelegramAPI:
         state = self._load_state()
         self.main_message_id = state.get("main_message_id")
         self.chat_id = state.get("chat_id") or TELEGRAM_CONFIG.get("chat_id")
+        self.bot_token = TELEGRAM_CONFIG.get("bot_token")
         self.last_text = None
         self.last_keyboard = None
 
-        self.app.log(f"TelegramAPI initialized: chat_id={self.chat_id}, main_message_id={self.main_message_id}")
+        self.app.log(f"TelegramAPI initialized: bot_token={'SET' if self.bot_token else 'NOT SET'}, "
+                     f"chat_id={self.chat_id}, main_message_id={self.main_message_id}")
 
     # ───────────── Персистентное состояние ─────────────
 
@@ -53,7 +57,77 @@ class TelegramAPI:
         self.last_text = None
         self.last_keyboard = None
 
-    # ───────────── Вызовы HA telegram_bot интеграции ─────────────
+    # ───────────── Прямые вызовы Telegram Bot API (Rich Tables) ─────────────
+
+    def _tg_api(self, method, payload, timeout=5):
+        """Выполняет HTTP-запрос к Telegram Bot API."""
+        if not self.bot_token:
+            return None
+        url = f"https://api.telegram.org/bot{self.bot_token}/{method}"
+        data = json.dumps(payload, ensure_ascii=True).encode("ascii")
+        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                result = json.loads(resp.read().decode("utf-8"))
+                self.app.log(f"✅ Telegram API {method} OK")
+                return result
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", errors="replace")
+            self.app.log(f"❌ Telegram API error {e.code} for {method}: {body}")
+            return None
+        except Exception as e:
+            self.app.log(f"⚠️ Telegram API request error for {method}: {e}")
+            return None
+
+    def _build_inline_markup(self, inline_keyboard):
+        """Преобразует список кнопок в формат InlineKeyboardMarkup."""
+        if not inline_keyboard:
+            return None
+        keyboard = []
+        for row in inline_keyboard:
+            kb_row = []
+            for item in row:
+                if isinstance(item, (list, tuple)) and len(item) == 2:
+                    kb_row.append({"text": item[0], "callback_data": item[1]})
+                elif isinstance(item, dict):
+                    kb_row.append(item)
+            keyboard.append(kb_row)
+        return {"inline_keyboard": keyboard}
+
+    def _send_rich_message(self, blocks, inline_keyboard=None):
+        """Отправляет Rich Message с нативными графическими таблицами Telegram."""
+        payload = {
+            "chat_id": self.chat_id,
+            "rich_message": {"blocks": blocks}
+        }
+        markup = self._build_inline_markup(inline_keyboard)
+        if markup:
+            payload["reply_markup"] = markup
+
+        self.app.log(f"📤 SENDING RICH TABLE MESSAGE to chat {self.chat_id}")
+        result = self._tg_api("sendRichMessage", payload)
+        if result and result.get("ok"):
+            msg_id = result["result"]["message_id"]
+            self.app.log(f"📤 Rich table message sent, message_id={msg_id}")
+            return msg_id
+        return None
+
+    def _edit_rich_message(self, message_id, blocks, inline_keyboard=None):
+        """Редактирует Rich Message с графическими таблицами."""
+        payload = {
+            "chat_id": self.chat_id,
+            "message_id": message_id,
+            "rich_message": {"blocks": blocks}
+        }
+        markup = self._build_inline_markup(inline_keyboard)
+        if markup:
+            payload["reply_markup"] = markup
+
+        self.app.log(f"✏️ EDITING RICH TABLE MESSAGE (message_id: {message_id})")
+        result = self._tg_api("editMessageText", payload)
+        return result and result.get("ok")
+
+    # ───────────── Вызовы HA telegram_bot интеграции (Fallback) ─────────────
 
     def _ha_send_message(self, text, inline_keyboard=None, parse_mode="html"):
         """Отправляет текстовое сообщение через HA-интеграцию."""
@@ -75,7 +149,7 @@ class TelegramAPI:
         return None
 
     def _ha_edit_message(self, message_id, text, inline_keyboard=None, parse_mode="html"):
-        """Редактирует сообщение через HA-интеграцию в месте его расположения."""
+        """Редактирует сообщение через HA-интеграцию без удаления."""
         kwargs = {
             "message_id": message_id,
             "message": text,
@@ -111,33 +185,46 @@ class TelegramAPI:
     def render_message(self, text=None, inline_keyboard=None, parse_mode="html", rich_blocks=None):
         """
         Рендерит основное сообщение бота.
-        Редактирует текущее закрепленное/главное сообщение.
+        Приоритет: Нативные графические таблицы Telegram (sendRichMessage / editMessageText).
+        Никогда не удаляет сообщение при сбоях редактирования.
         """
-        if not text:
-            return
+        compare_key = json.dumps(rich_blocks, ensure_ascii=False, sort_keys=True) if rich_blocks else text
 
-        # Предотвращаем повторные вызовы, если текст и клавиатура не изменились
         if self.main_message_id is not None:
-            if self.last_text == text and self.last_keyboard == inline_keyboard:
+            if self.last_text == compare_key and self.last_keyboard == inline_keyboard:
                 return
 
-        self.last_text = text
+        self.last_text = compare_key
         self.last_keyboard = inline_keyboard
 
-        # ─── 1. Если еще нет ID сообщения — отправляем новое и закрепляем ───
+        use_rich = bool(rich_blocks and self.bot_token and self.chat_id)
+
+        # ─── 1. Если еще нет ID сообщения — отправляем новое (таблица или текст) и закрепляем ───
         if self.main_message_id is None:
-            msg_id = self._ha_send_message(text, inline_keyboard, parse_mode)
-            if msg_id:
-                self.main_message_id = msg_id
-                self._save_state()
-                self.pin_main_message()
+            if use_rich:
+                msg_id = self._send_rich_message(rich_blocks, inline_keyboard)
+                if msg_id:
+                    self.main_message_id = msg_id
+                    self._save_state()
+                    self.pin_main_message()
+                    return
+
+            if text:
+                msg_id = self._ha_send_message(text, inline_keyboard, parse_mode)
+                if msg_id:
+                    self.main_message_id = msg_id
+                    self._save_state()
+                    self.pin_main_message()
 
         # ─── 2. Если сообщение существует — редактируем его в чате ───
         else:
-            try:
+            if use_rich:
+                success = self._edit_rich_message(self.main_message_id, rich_blocks, inline_keyboard)
+                if success:
+                    return
+
+            if text:
                 self._ha_edit_message(self.main_message_id, text, inline_keyboard, parse_mode)
-            except Exception as e:
-                self.app.log(f"Edit failed for message {self.main_message_id}: {e}")
 
     def send_notification(self, text, inline_keyboard=None, parse_mode="html"):
         """Отправляет всплывающее уведомление"""
