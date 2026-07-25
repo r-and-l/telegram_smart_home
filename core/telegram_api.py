@@ -56,12 +56,12 @@ class TelegramAPI:
     # ───────────── Вызовы HA telegram_bot интеграции ─────────────
 
     def _ha_send_message(self, text, inline_keyboard=None, parse_mode="html"):
-        """Отправляет обычное текстовое сообщение через HA-интеграцию."""
+        """Отправляет текстовое сообщение через HA-интеграцию."""
         kwargs = {"message": text, "parse_mode": parse_mode}
         if inline_keyboard is not None:
             kwargs["inline_keyboard"] = inline_keyboard
         if self.chat_id:
-            kwargs["target"] = [self.chat_id]
+            kwargs["chat_id"] = self.chat_id
             
         self.app.log(f"📤 SENDING MESSAGE via HA")
         response = self.app.call_service("telegram_bot/send_message", **kwargs)
@@ -91,7 +91,7 @@ class TelegramAPI:
             self.app.log(f"HA edit_message failed for {message_id}: {e}")
 
     def pin_main_message(self):
-        """Закрепляет главное сообщение в чате (по запросу пользователя)."""
+        """Закрепляет главное сообщение в чате."""
         if not self.main_message_id:
             return
         try:
@@ -112,7 +112,6 @@ class TelegramAPI:
         """
         Рендерит основное сообщение бота.
         Редактирует текущее закрепленное/главное сообщение.
-        Никогда не удаляет сообщение при ошибках редактирования.
         """
         if not text:
             return
@@ -146,7 +145,7 @@ class TelegramAPI:
         if inline_keyboard is not None:
             kwargs["inline_keyboard"] = inline_keyboard
         if self.chat_id:
-            kwargs["target"] = [self.chat_id]
+            kwargs["chat_id"] = self.chat_id
         try:
             self.app.log(f"🔔 SENDING NOTIFICATION...")
             response = self.app.call_service("telegram_bot/send_message", **kwargs)
