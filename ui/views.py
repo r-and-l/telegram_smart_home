@@ -264,7 +264,7 @@ def build_climate_sensors_rich_blocks(app, sensor_items):
     return table_block, fallback_text
 
 
-def build_ac_text(name, state, current_temp, target_temp, fan_mode, breather_state=None, breather_mode=None):
+def build_ac_text(name, state, current_temp, target_temp, fan_mode, breather_state=None, breather_mode=None, last_mode=None):
     """Строит текст для подменю кондиционера"""
     modes_ru = {
         "off": "🛑 Выключен",
@@ -290,10 +290,19 @@ def build_ac_text(name, state, current_temp, target_temp, fan_mode, breather_sta
         "level7": "Скорость 7 (Макс)",
     }
     
-    mode_text = modes_ru.get(str(state).lower(), str(state))
+    is_on = str(state).lower() != "off"
+    status_text = "🟢 Включен" if is_on else "🔴 Выключен"
+
+    if is_on:
+        mode_text = modes_ru.get(str(state).lower(), str(state))
+    else:
+        active_m = last_mode if last_mode and last_mode != "off" else "cool"
+        mode_text = modes_ru.get(active_m, "❄️ Охлаждение")
+
     fan_text = fan_modes_ru.get(str(fan_mode).lower(), str(fan_mode)) if fan_mode else "нет данных"
     
     text = f"⚙️ <b>Управление: {name}</b>\n\n"
+    text += f"<b>Статус:</b> {status_text}\n"
     text += f"<b>Режим:</b> {mode_text}\n"
     if current_temp is not None:
         text += f"<b>В комнате:</b> {current_temp}°C\n"
@@ -308,7 +317,7 @@ def build_ac_text(name, state, current_temp, target_temp, fan_mode, breather_sta
         
     return text
 
-def build_ac_rich_blocks(name, state, current_temp, target_temp, fan_mode, breather_state=None, breather_mode=None):
+def build_ac_rich_blocks(name, state, current_temp, target_temp, fan_mode, breather_state=None, breather_mode=None, last_mode=None):
     """Строит rich-блоки для подменю кондиционера"""
     modes_ru = {
         "off": "🛑 Выключен",
@@ -334,10 +343,19 @@ def build_ac_rich_blocks(name, state, current_temp, target_temp, fan_mode, breat
         "level7": "Скорость 7 (Макс)",
     }
     
-    mode_text = modes_ru.get(str(state).lower(), str(state))
+    is_on = str(state).lower() != "off"
+    status_text = "🟢 Включен" if is_on else "🔴 Выключен"
+
+    if is_on:
+        mode_text = modes_ru.get(str(state).lower(), str(state))
+    else:
+        active_m = last_mode if last_mode and last_mode != "off" else "cool"
+        mode_text = modes_ru.get(active_m, "❄️ Охлаждение")
+
     fan_text = fan_modes_ru.get(str(fan_mode).lower(), str(fan_mode)) if fan_mode else "нет данных"
     
     rows = [
+        ["Статус", status_text],
         ["Режим", mode_text],
     ]
     if current_temp is not None:
@@ -355,6 +373,7 @@ def build_ac_rich_blocks(name, state, current_temp, target_temp, fan_mode, breat
         build_rich_section_heading(f"⚙️ Управление: {name}"),
         build_rich_table_block(["Параметр", "Значение"], rows, is_bordered=True, is_striped=True)
     ]
+
 
 
 def build_ac_keyboard(entity_id, sub_menu=None, state="off"):

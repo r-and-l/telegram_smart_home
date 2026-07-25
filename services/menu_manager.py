@@ -117,10 +117,18 @@ class ACMenu(Menu):
         breather_state = self.app.get_state(breather_ent)
         breather_mode = self.app.get_state(breather_ent, attribute="preset_mode")
         
+        if not hasattr(self.app, "last_ac_modes"):
+            self.app.last_ac_modes = {}
+            
+        if state and str(state).lower() != "off":
+            self.app.last_ac_modes[self.entity_id] = str(state).lower()
+
+        last_mode = self.app.last_ac_modes.get(self.entity_id, "cool")
+        
         from ui.views import build_ac_text, build_ac_keyboard, build_ac_rich_blocks
         
-        blocks = build_ac_rich_blocks(name, state, current_temp, target_temp, fan_mode, breather_state, breather_mode)
-        fallback_text = build_ac_text(name, state, current_temp, target_temp, fan_mode, breather_state, breather_mode)
+        blocks = build_ac_rich_blocks(name, state, current_temp, target_temp, fan_mode, breather_state, breather_mode, last_mode=last_mode)
+        fallback_text = build_ac_text(name, state, current_temp, target_temp, fan_mode, breather_state, breather_mode, last_mode=last_mode)
         inline_keyboard = build_ac_keyboard(self.entity_id, sub_menu=self.sub_menu, state=state)
         
         return blocks, fallback_text, inline_keyboard, "html"

@@ -48,8 +48,13 @@ class Router:
                 entity = parts[2]
                 action = parts[3]
                 if action == "on":
-                    self.app.call_service("climate/turn_on", entity_id=entity)
+                    if not hasattr(self.app, "last_ac_modes"):
+                        self.app.last_ac_modes = {}
+                    target_mode = self.app.last_ac_modes.get(entity, "cool")
+                    self.app.log(f"🟢 Turning ON climate {entity} with mode {target_mode}")
+                    self.app.call_service("climate/set_hvac_mode", entity_id=entity, hvac_mode=target_mode)
                 else:
+                    self.app.log(f"🛑 Turning OFF climate {entity}")
                     self.app.call_service("climate/turn_off", entity_id=entity)
             if self.menu_manager.current_menu:
                 self.menu_manager._render_current_menu()
@@ -61,8 +66,15 @@ class Router:
                 entity = parts[2]
                 mode = parts[3]
                 
+                if mode != "off":
+                    if not hasattr(self.app, "last_ac_modes"):
+                        self.app.last_ac_modes = {}
+                    self.app.last_ac_modes[entity] = mode
+
                 if mode == "fresh_air":
                     self.app.call_service("climate/set_preset_mode", entity_id=entity, preset_mode="fresh_air")
+                elif mode == "off":
+                    self.app.call_service("climate/turn_off", entity_id=entity)
                 else:
                     self.app.call_service("climate/set_hvac_mode", entity_id=entity, hvac_mode=mode)
                     
