@@ -468,5 +468,45 @@ class RouterAndViewsTestCase(unittest.TestCase):
         self.assertEqual(len(closed), len(devices.controllable("blinds")))
 
 
+class ConfigExampleTestCase(unittest.TestCase):
+    """config.example.py не импортируется приложением, поэтому проверяем его отдельно."""
+
+    def load_example(self):
+        import importlib.util
+
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "config.example.py")
+        spec = importlib.util.spec_from_file_location("config_example", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_example_has_everything_the_code_reads(self):
+        example = self.load_example()
+        for name in ("DEVICES", "CATEGORIES", "BREATHER_ENTITY",
+                     "LIGHT_MONITOR_CONFIG", "TIMER_CONFIG", "TELEGRAM_CONFIG"):
+            self.assertTrue(hasattr(example, name), f"в примере нет {name}")
+
+        self.assertIn("group_notification_window", example.LIGHT_MONITOR_CONFIG)
+        self.assertIn("reconcile_interval", example.LIGHT_MONITOR_CONFIG)
+        for key in ("min_minutes", "max_minutes", "steps"):
+            self.assertIn(key, example.TIMER_CONFIG)
+
+    def test_example_devices_are_well_formed(self):
+        example = self.load_example()
+        for device in example.DEVICES:
+            for field in ("name", "entity", "type", "room"):
+                self.assertIn(field, device, device)
+            self.assertIn(device["type"], example.CATEGORIES, device["name"])
+
+        # Каждая категория представлена хотя бы одним устройством
+        used_types = {d["type"] for d in example.DEVICES}
+        self.assertEqual(used_types, set(example.CATEGORIES))
+
+        # И хотя бы один светильник с таймером — иначе пример не показывает главную функцию
+        lights = [d for d in example.DEVICES if d["type"] == "lights"]
+        self.assertTrue(any(d.get("timer_minutes") for d in lights))
+
+
 if __name__ == "__main__":
     unittest.main()

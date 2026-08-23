@@ -1,142 +1,54 @@
+# Шаблон конфигурации. Скопируйте в config.py и опишите свои сущности.
+#
+# DEVICES — плоский список устройств. Обязательные поля: name, entity, type, room.
+#   type   — категория из CATEGORIES; определяет, в каком меню появится устройство.
+#   entity — id сущности Home Assistant. Для датчиков с несколькими показаниями
+#            вместо строки передаётся dict (см. пример ниже) и ставится is_sensor.
+#   timer_minutes — только для type="lights": через сколько минут горения прислать
+#            уведомление. Это значение по умолчанию, из Telegram его можно менять
+#            в меню «⏱ Таймеры» (переопределения хранятся в state.json).
+#            Без этого поля свет не отслеживается.
+
 DEVICES = [
     {
         "name": "🚪 Коридор",
-        "entity": "switch.svet_v_koridore_vykliuchatel",
+        "entity": "switch.hallway_light",
         "type": "lights",
         "room": "hallway",
-        "timer_minutes": 15
-    },
-    {
-        "name": "🚽 Туалет",
-        "entity": "switch.svet_v_tualete_vykliuchatel",
-        "type": "lights",
-        "room": "toilet",
-        "timer_minutes": 10
-    },
-    {
-        "name": "🛁 Ванная",
-        "entity": "switch.svet_v_vannoi_vykliuchatel",
-        "type": "lights",
-        "room": "bathroom",
-        "timer_minutes": 10
-    },
-    {
-        "name": "🍳 Кухня общ.",
-        "entity": "switch.svet_osnovnoi_vykliuchatel_2",
-        "type": "lights",
-        "room": "kitchen",
-        "timer_minutes": 120
-    },
-    {
-        "name": "🍳 Кухня раб.",
-        "entity": "switch.rabochii_svet_vykliuchatel",
-        "type": "lights",
-        "room": "kitchen",
-        "timer_minutes": 120
-    },
-    {
-        "name": "🛋️ Гостинная",
-        "entity": "switch.svet_osnovnoi_vykliuchatel",
-        "type": "lights",
-        "room": "living",
-        "timer_minutes": 60
-    },
-    {
-        "name": "💤 Спальня",
-        "entity": "switch.svet_v_spalne_vykliuchatel",
-        "type": "lights",
-        "room": "bedroom",
-        "timer_minutes": 30
-    },
-    {
-        "name": "💼 Оффис",
-        "entity": "switch.svet_v_igrovoi_vykliuchatel_2",
-        "type": "lights",
-        "room": "office",
-        "timer_minutes": 180
-    },
-    {
-        "name": "🚿 Вытяжка ванна",
-        "entity": "light.lumi_lumi_relay_c2acn01_osveshchenie",
-        "type": "climate",
-        "room": "bathroom"
-    },
-    {
-        "name": "🚽 Вытяжка туалет",
-        "entity": "light.lumi_lumi_relay_c2acn01_osveshchenie_2",
-        "type": "climate",
-        "room": "toilet"
+        "timer_minutes": 15,
     },
     {
         "name": "❄️ Кондиционер",
-        "entity": "climate.kondicioner",
+        "entity": "climate.bedroom_ac",
         "type": "climate",
-        "room": "bedroom"
+        "room": "bedroom",
     },
     {
-        "name": "🛋️ Гостинная",
-        "entity": "",
-        "type": "blinds",
-        "room": "living"
-    },
-    {
-        "name": "💤 Спальня",
-        "entity": "cover.shtory_v_spalne_ograzhdaiushchee_ustroistvo",
-        "type": "blinds",
-        "room": "bedroom"
-    },
-    {
-        "name": "💼 Оффис",
-        "entity": "",
-        "type": "blinds",
-        "room": "office"
-    },
-    {
-        "name": "🌤️ Погода",
-        "entity": "weather.forecast_home_assistant",
-        "type": "weather",
-        "room": "outside"
-    },
-    {
-        "name": "🌖 Луна",
-        "entity": "sensor.moon_phase",
-        "type": "weather",
-        "room": "outside"
-    },
-    {
-        "name": "🌅 Восход",
-        "entity": "sensor.sun_next_rising",
-        "type": "weather",
-        "room": "outside"
-    },
-    {
-        "name": "🌇 Закат",
-        "entity": "sensor.sun_next_setting",
-        "type": "weather",
-        "room": "outside"
-    }
-    , {
-        "name": "🚽 Туалет",
-        "entity": {
-            "temperature": "sensor.temperatura_v_tualete_temperatura",
-            "humidity": "sensor.temperatura_v_tualete_vlazhnost"
-        },
-        "type": "climate",
-        "room": "toilet",
-        "is_sensor": True
-    }
-    , {
+        # Датчик с двумя показаниями: рисуется в таблице «Датчики» меню климата
         "name": "🛁 Ванная",
         "entity": {
-            "temperature": "sensor.datchik_v_vannoi_temperatura",
-            "humidity": "sensor.datchik_v_vannoi_vlazhnost"
+            "temperature": "sensor.bathroom_temperature",
+            "humidity": "sensor.bathroom_humidity",
         },
         "type": "climate",
         "room": "bathroom",
-        "is_sensor": True
-    }
+        "is_sensor": True,
+    },
+    {
+        "name": "💤 Спальня",
+        "entity": "cover.bedroom_blinds",
+        "type": "blinds",
+        "room": "bedroom",
+    },
+    {
+        "name": "🌤️ Погода",
+        "entity": "weather.forecast_home",
+        "type": "weather",
+        "room": "outside",
+    },
 ]
 
+# Разделы меню. Кнопка каждой категории автоматически появляется в главном меню.
 CATEGORIES = {
     "lights": {
         "title": "🏠 *Освещение*\n\n",
@@ -157,25 +69,21 @@ CATEGORIES = {
 }
 
 # Сущность бризера (приточной вентиляции), управляемая из меню кондиционера
-BREATHER_ENTITY = "fan.xiaomi_mt0_1917_air_fresh"
+BREATHER_ENTITY = "fan.air_fresh"
 
-# Настройки для мониторинга света
 LIGHT_MONITOR_CONFIG = {
-    "group_notification_window": 5,  # Минуты, в течение которых группировать уведомления
+    "group_notification_window": 5,  # Минуты, в течение которых уведомления группируются в одно
     "reconcile_interval": 60,        # Секунды между сверками уведомлений с реальным состоянием
 }
 
-# Границы для настройки таймеров света из Telegram.
-# Значения из DEVICES используются как значение по умолчанию,
-# переопределения сохраняются в state.json.
+# Границы и шаги для настройки таймеров света из Telegram
 TIMER_CONFIG = {
     "min_minutes": 1,
     "max_minutes": 720,
     "steps": [-30, -5, 5, 30],  # Кнопки быстрой правки в меню таймеров
 }
 
-# Общие настройки Telegram
 TELEGRAM_CONFIG = {
-    "chat_id": None, 
-    "bot_token": "ТВОЙ_ТОКЕН_БОТА", # Если у вас несколько чатов, укажите здесь ID нужного (например, 123456789)
+    "chat_id": None,               # None — берётся из первого входящего сообщения
+    "bot_token": "ТВОЙ_ТОКЕН_БОТА",  # Нужен для нативных таблиц и надёжного удаления уведомлений
 }
