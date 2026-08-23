@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from config import LIGHT_MONITOR_CONFIG, TIMER_CONFIG
 from core import devices
 
@@ -10,6 +12,10 @@ class LightMonitor:
     модулей или рестарт AppDaemon не оставляет «осиротевших» сообщений в чате:
     при старте и далее по таймеру состояние сверяется с реальным состоянием света.
     """
+
+    # Минимальная задержка перед уведомлением: свет уже перегорел лимит,
+    # но состояние в HA должно успеть устояться после запуска приложения.
+    _MIN_TIMER_DELAY = 10
 
     def __init__(self, app, telegram_api, store=None):
         self.app = app
@@ -179,9 +185,30 @@ class LightMonitor:
         if not minutes:
             return
 
-        handle = self.app.run_in(self._send_light_notification, minutes * 60, entity=entity)
+        # Отсчёт ведётся от момента включения света, а не от запуска таймера.
+        # Иначе рестарт AppDaemon (или reconcile) обнуляет прогресс, и для
+        # долгих таймеров уведомление не приходит никогда.
+        elapsed = self._seconds_since_on(entity)
+        remaining = max(self._MIN_TIMER_DELAY, minutes * 60 - elapsed)
+
+        handle = self.app.run_in(self._send_light_notification, remaining, entity=entity)
         self.active_timers[entity] = handle
-        self.app.log(f"Started timer for {entity}: {minutes} min")
+        self.app.log(
+            f"Started timer for {entity}: {minutes} min total, "
+            f"{int(elapsed // 60)} min already on, fires in {int(remaining)} s"
+        )
+
+    def _seconds_since_on(self, entity):
+        """Сколько секунд свет уже горит по данным Home Assistant (0, если неизвестно)."""
+        last_changed = self.app.get_state(entity, attribute="last_changed")
+        if not last_changed:
+            return 0
+        try:
+            changed_at = datetime.fromisoformat(str(last_changed).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return 0
+        elapsed = (datetime.now(changed_at.tzinfo) - changed_at).total_seconds()
+        return max(0, elapsed)
 
     def _cancel_light_timer(self, entity):
         """Отменяет таймер для света"""
@@ -225,7 +252,10 @@ class LightMonitor:
         """Текст и клавиатура уведомления для набора сущностей."""
         if len(entities) == 1:
             entity = entities[0]
-            minutes = self.timer_minutes(entity) or self.default_timer_minutes(entity)
+            # Реальное время горения, а не значение таймера: после рестарта
+            # приложения уведомление может прийти позже установленного лимита
+            minutes = int(self._seconds_since_on(entity) // 60) or \
+                self.timer_minutes(entity) or self.default_timer_minutes(entity)
             text = (f"💡 Свет в {devices.name_of(entity)} горит уже {minutes} минут!"
                     f"\n\nВыключить?")
             keyboard = [[("Выключить", f"/turn_off:{entity}")]]
@@ -238,7 +268,9 @@ class LightMonitor:
 
     def _send_individual_notification(self, entity):
         """Отправляет индивидуальное уведомление (или обновляет уже существующее)"""
-        if self._notification_of(entity):
+        existing = self._notification_of(entity)
+        if existing:
+            self.app.log(f"⏭ Notification for {entity} already exists (msg {existing}), skipping")
             return
 
         text, keyboard = self._notification_content([entity])
@@ -247,6 +279,8 @@ class LightMonitor:
             self.notifications[str(message_id)] = [entity]
             self._save_notifications()
             self.app.log(f"Sent individual notification for {entity}")
+        else:
+            self.app.log(f"⚠️ Failed to send notification for {entity}, will retry on next reconcile")
 
     def _send_group_notification(self, entities):
         """Отправляет групповое уведомление, убирая ранее отправленные по этим сущностям"""
@@ -260,6 +294,8 @@ class LightMonitor:
             self.notifications[str(message_id)] = list(entities)
             self._save_notifications()
             self.app.log(f"Sent group notification for {entities}")
+        else:
+            self.app.log(f"⚠️ Failed to send group notification for {entities}, will retry on next reconcile")
         for entity in entities:
             self.pending_group_notifications.pop(entity, None)
 

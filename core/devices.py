@@ -39,6 +39,23 @@ def _build_index():
 
 _build_index()
 
+# Short numeric tokens for entity IDs — keeps callback_data within
+# Telegram's 64-byte limit for inline buttons.
+ENTITY_TOKENS = {}   # entity_id -> str token
+TOKEN_ENTITIES = {}   # str token -> entity_id
+
+
+def _build_token_index():
+    ENTITY_TOKENS.clear()
+    TOKEN_ENTITIES.clear()
+    for i, entity in enumerate(BY_ENTITY.keys()):
+        token = str(i)
+        ENTITY_TOKENS[entity] = token
+        TOKEN_ENTITIES[token] = entity
+
+
+_build_token_index()
+
 
 def by_type(device_type):
     """Устройства указанного типа (lights / climate / blinds / weather)."""
@@ -72,3 +89,13 @@ def lights():
 def all_monitored_entities():
     """Все сущности из конфига — для регистрации слушателей состояния."""
     return list(BY_ENTITY.keys())
+
+
+def entity_token(entity):
+    """Short token for callback_data (Telegram limits it to 64 bytes)."""
+    return ENTITY_TOKENS.get(entity, entity)
+
+
+def entity_by_token(token):
+    """Resolve short token back to entity_id. Falls back to returning token as-is."""
+    return TOKEN_ENTITIES.get(str(token), token)

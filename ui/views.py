@@ -1,6 +1,7 @@
 
 from datetime import datetime
 from config import TIMER_CONFIG
+from core import devices
 from ui.translations import WEATHER_TRANSLATIONS, MOON_PHASES, AC_MODES, FAN_MODES
 
 
@@ -309,7 +310,7 @@ def build_timers_rich_blocks(overview):
 def build_timers_keyboard(overview, per_row=2):
     """Кнопки выбора комнаты для настройки таймера."""
     buttons = [
-        (f"{name} · {_timer_value_text(minutes, is_custom)}", f"/timer:open:{entity}")
+        (f"{name} · {_timer_value_text(minutes, is_custom)}", f"/timer:open:{devices.entity_token(entity)}")
         for name, entity, minutes, _is_on, is_custom in overview
     ]
     keyboard = build_keyboard(buttons, per_row)
@@ -341,26 +342,28 @@ def build_timer_edit_rich_blocks(name, minutes, default_minutes, is_on):
 
 def build_timer_edit_keyboard(entity, minutes, default_minutes=None):
     """Кнопки правки таймера: шаги из TIMER_CONFIG, пресеты, сброс и выключение."""
+    token = devices.entity_token(entity)
+
     step_row = [
-        (f"{'➖' if step < 0 else '➕'} {abs(step)}", f"/timer:adjust:{entity}:{step}")
+        (f"{'➖' if step < 0 else '➕'} {abs(step)}", f"/timer:adjust:{token}:{step}")
         for step in TIMER_CONFIG["steps"]
     ]
 
     preset_row = [
-        (f"{value} мин", f"/timer:set:{entity}:{value}")
+        (f"{value} мин", f"/timer:set:{token}:{value}")
         for value in (10, 30, 60, 120)
     ]
 
     if minutes:
-        toggle_btn = ("🔕 Отключить", f"/timer:set:{entity}:0")
+        toggle_btn = ("🔕 Отключить", f"/timer:set:{token}:0")
     else:
         # Включаем со значением из config.py, а при его отсутствии — с 15 минутами
-        toggle_btn = ("🔔 Включить", f"/timer:set:{entity}:{default_minutes or 15}")
+        toggle_btn = ("🔔 Включить", f"/timer:set:{token}:{default_minutes or 15}")
 
     return [
         step_row,
         preset_row,
-        [toggle_btn, ("♻️ По умолчанию", f"/timer:reset:{entity}")],
+        [toggle_btn, ("♻️ По умолчанию", f"/timer:reset:{token}")],
         [("⬅️ К таймерам", "/menu:timers"), ("🏠 Главная", "/back")],
     ]
 

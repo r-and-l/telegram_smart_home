@@ -8,7 +8,7 @@ import os
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -38,6 +38,13 @@ class FakeApp:
 
     def set_state_value(self, entity, value):
         self.states[entity] = value
+        # HA обновляет last_changed при каждой смене состояния
+        self.states[f"{entity}.last_changed"] = datetime.now(timezone.utc).isoformat()
+
+    def set_last_changed(self, entity, minutes_ago):
+        """Сдвигает last_changed в прошлое: имитация уже горящего света."""
+        moment = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+        self.states[f"{entity}.last_changed"] = moment.isoformat()
 
     def call_service(self, service, **kwargs):
         self.service_calls.append((service, kwargs))
@@ -135,8 +142,9 @@ class LightMonitorTestCase(unittest.TestCase):
     def make_monitor(self):
         return self.LightMonitor(self.app, self.telegram, store=self.store)
 
-    def turn_on(self, monitor, entity):
+    def turn_on(self, monitor, entity, on_for_minutes=0):
         self.app.set_state_value(entity, "on")
+        self.app.set_last_changed(entity, on_for_minutes)
         monitor.light_state_changed(entity, "state", "off", "on", {})
 
     def turn_off(self, monitor, entity):
@@ -210,6 +218,49 @@ class LightMonitorTestCase(unittest.TestCase):
         self.app.timers.clear()
         monitor.reconcile()
         self.assertIn(entity, monitor.active_timers)
+
+    def test_timer_counts_from_switch_on_not_from_app_start(self):
+        """Рестарт AppDaemon не должен обнулять прогресс: иначе долгий таймер не срабатывает."""
+        monitor = self.make_monitor()
+        entity = self.lights[0]
+        total_minutes = monitor.timer_minutes(entity)
+
+        # Свет уже горит, но приложение только что стартовало
+        self.app.set_state_value(entity, "on")
+        self.app.set_last_changed(entity, total_minutes - 5)
+        self.app.timers.clear()
+        monitor.reconcile()
+
+        handle = monitor.active_timers[entity]
+        delay = self.app.timers[handle][1]
+        self.assertLess(delay, total_minutes * 60)
+        self.assertAlmostEqual(delay, 5 * 60, delta=60)
+
+    def test_timer_fires_immediately_if_limit_already_passed(self):
+        monitor = self.make_monitor()
+        entity = self.lights[0]
+
+        # Ровно случай из логов: свет горит 127 минут, лимит 120
+        self.app.set_state_value(entity, "on")
+        self.app.set_last_changed(entity, (monitor.timer_minutes(entity) or 120) + 7)
+        self.app.timers.clear()
+        monitor.reconcile()
+
+        handle = monitor.active_timers[entity]
+        self.assertLessEqual(self.app.timers[handle][1], 60)
+
+        self.app.fire_timer(handle)
+        self.assertEqual(len(monitor.notifications), 1)
+
+    def test_notification_reports_real_burn_time(self):
+        monitor = self.make_monitor()
+        entity = self.lights[0]
+
+        self.turn_on(monitor, entity, on_for_minutes=127)
+        self.fire_all_timers()
+
+        message_id = int(list(monitor.notifications.keys())[0])
+        self.assertIn("127 минут", self.telegram.sent[message_id])
 
     # ───────────── Групповые уведомления ─────────────
 
@@ -310,7 +361,7 @@ class LightMonitorTestCase(unittest.TestCase):
         self.assertEqual(monitor.timer_minutes(entity), 7)
 
         handle = monitor.active_timers[entity]
-        self.assertEqual(self.app.timers[handle][1], 7 * 60)
+        self.assertAlmostEqual(self.app.timers[handle][1], 7 * 60, delta=1)
 
         reloaded = Store(self.app, path=self.state_path)
         self.assertEqual(reloaded.get("timers", {})[entity], 7)
@@ -412,6 +463,42 @@ class RouterAndViewsTestCase(unittest.TestCase):
         self.callback(f"/timer:reset:{entity}")
         self.assertEqual(self.monitor.timer_minutes(entity),
                          self.monitor.default_timer_minutes(entity))
+
+    def test_timer_flow_via_tokens(self):
+        """Timer callbacks work with short tokens (Telegram 64-byte limit)."""
+        entity = devices.lights()[0]["entity"]
+        token = devices.entity_token(entity)
+        self.assertNotEqual(token, entity)
+
+        self.callback(f"/timer:open:{token}")
+        self.assertEqual(self.menu.current_menu, f"timer_edit:{entity}")
+
+        self.callback(f"/timer:set:{token}:45")
+        self.assertEqual(self.monitor.timer_minutes(entity), 45)
+
+        self.callback(f"/timer:adjust:{token}:-30")
+        self.assertEqual(self.monitor.timer_minutes(entity), 15)
+
+        self.callback(f"/timer:reset:{token}")
+        self.assertEqual(self.monitor.timer_minutes(entity),
+                         self.monitor.default_timer_minutes(entity))
+
+    def test_timer_keyboard_fits_telegram_limit(self):
+        """All timer keyboard buttons must fit in Telegram's 64-byte callback_data limit."""
+        from ui.views import build_timer_edit_keyboard, build_timers_keyboard
+        overview = self.monitor.timers_overview()
+
+        for row in build_timers_keyboard(overview):
+            for item in row:
+                if isinstance(item, (list, tuple)) and len(item) == 2:
+                    self.assertLessEqual(len(item[1].encode("utf-8")), 64, item[1])
+
+        for _name, entity, minutes, _is_on, _is_custom in overview:
+            default = self.monitor.default_timer_minutes(entity)
+            for row in build_timer_edit_keyboard(entity, minutes, default):
+                for item in row:
+                    if isinstance(item, (list, tuple)) and len(item) == 2:
+                        self.assertLessEqual(len(item[1].encode("utf-8")), 64, item[1])
 
     def test_prefix_routing_prefers_specific_menu(self):
         ac_entity = next(

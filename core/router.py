@@ -1,4 +1,5 @@
 from config import BREATHER_ENTITY
+from core import devices
 
 
 class Router:
@@ -190,16 +191,17 @@ class Router:
 
     def _timer(self, payload):
         """
-        Команды настройки таймеров:
-          open:<entity>            — экран настройки
-          set:<entity>:<minutes>   — точное значение (0 — отключить уведомления)
-          adjust:<entity>:<delta>  — сдвиг на N минут
-          reset:<entity>           — вернуть значение из config.py
+        Команды настройки таймеров (entity передаётся коротким токеном):
+          open:<token>            — экран настройки
+          set:<token>:<minutes>   — точное значение (0 — отключить уведомления)
+          adjust:<token>:<delta>  — сдвиг на N минут
+          reset:<token>           — вернуть значение из config.py
         """
         parts = payload.split(":")
-        action, entity = parts[0], parts[1] if len(parts) > 1 else None
-        if not entity:
+        action, token = parts[0], parts[1] if len(parts) > 1 else None
+        if not token:
             return
+        entity = devices.entity_by_token(token)
 
         if action == "open":
             self.menu_manager.show_timer_edit_menu(entity)
