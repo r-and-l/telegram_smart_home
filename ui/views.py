@@ -1,6 +1,7 @@
 
 from datetime import datetime
-from ui.translations import WEATHER_TRANSLATIONS, MOON_PHASES
+from config import TIMER_CONFIG
+from ui.translations import WEATHER_TRANSLATIONS, MOON_PHASES, AC_MODES, FAN_MODES
 
 
 def build_rich_table_block(headers, rows, is_bordered=True, is_striped=True):
@@ -147,53 +148,6 @@ def build_menu_rich_blocks(app, title, devices, icon_func=None, extra_func=build
     return blocks, fallback_text
 
 
-def build_climate_sensors_text(app, sensor_items):
-    """Строит текстовый блок для датчиков климата."""
-    if not sensor_items:
-        return ""
-        
-    sensor_text = "\n\n"
-    for s in sensor_items:
-        name = s["name"]
-        entity_data = s.get("entity")
-        
-        if isinstance(entity_data, dict):
-            temp_entity = entity_data.get("temperature")
-            hum_entity = entity_data.get("humidity")
-            
-            temp_val = app.get_state(temp_entity) if temp_entity else None
-            hum_val = app.get_state(hum_entity) if hum_entity else None
-            
-            parts = []
-            if temp_val is not None:
-                parts.append(f"🌡️ {temp_val}°C")
-            if hum_val is not None:
-                parts.append(f"💧 {hum_val}%")
-            val_str = " | ".join(parts) if parts else "нет данных"
-            sensor_text += f"<b>{name}</b>: {val_str}\n"
-            
-        elif isinstance(entity_data, list):
-            vals = []
-            for ent in entity_data:
-                if isinstance(ent, str):
-                    val = app.get_state(ent)
-                    if val is not None:
-                        if "temp" in ent or "temperatura" in ent:
-                            vals.append(f"🌡️ {val}°C")
-                        elif "vlag" in ent or "vlazhnost" in ent or "hum" in ent:
-                            vals.append(f"💧 {val}%")
-                        else:
-                            vals.append(str(val))
-            val_str = " | ".join(vals) if vals else "нет данных"
-            sensor_text += f"<b>{name}</b>: {val_str}\n"
-            
-        elif isinstance(entity_data, str):
-            val = app.get_state(entity_data)
-            val_str = str(val) if val is not None else "нет данных"
-            sensor_text += f"<b>{name}</b>: {val_str}\n"
-            
-    return sensor_text
-
 def build_climate_sensors_rich_blocks(app, sensor_items):
     """
     Строит таблицу rich-блоков для датчиков климата.
@@ -264,116 +218,151 @@ def build_climate_sensors_rich_blocks(app, sensor_items):
     return table_block, fallback_text
 
 
-def build_ac_text(name, state, current_temp, target_temp, fan_mode, breather_state=None, breather_mode=None, last_mode=None):
-    """Строит текст для подменю кондиционера"""
-    modes_ru = {
-        "off": "🛑 Выключен",
-        "cool": "❄️ Охлаждение",
-        "heat": "☀️ Обогрев",
-        "dry": "💧 Осушение",
-        "fan_only": "💨 Вентилятор",
-        "auto": "🤖 Авто"
-    }
-    fan_modes_ru = {
-        "auto": "Авто",
-        "low": "Низкая",
-        "medium": "Средняя",
-        "high": "Высокая",
-        "silent": "Тихий",
-        "turbo": "Турбо",
-        "level1": "Скорость 1 (Мин)",
-        "level2": "Скорость 2",
-        "level3": "Скорость 3",
-        "level4": "Скорость 4 (Средн)",
-        "level5": "Скорость 5",
-        "level6": "Скорость 6",
-        "level7": "Скорость 7 (Макс)",
-    }
-    
+def _ac_summary(state, current_temp, target_temp, fan_mode, breather_state=None,
+                breather_mode=None, last_mode=None):
+    """
+    Готовит пары (подпись, значение) для меню кондиционера.
+    Используется и текстовым, и табличным рендерером.
+    """
     is_on = str(state).lower() != "off"
     status_text = "🟢 Включен" if is_on else "🔴 Выключен"
 
     if is_on:
-        mode_text = modes_ru.get(str(state).lower(), str(state))
+        mode_text = AC_MODES.get(str(state).lower(), str(state))
     else:
-        active_m = last_mode if last_mode and last_mode != "off" else "cool"
-        mode_text = modes_ru.get(active_m, "❄️ Охлаждение")
+        active_mode = last_mode if last_mode and last_mode != "off" else "cool"
+        mode_text = AC_MODES.get(active_mode, AC_MODES["cool"])
 
-    fan_text = fan_modes_ru.get(str(fan_mode).lower(), str(fan_mode)) if fan_mode else "нет данных"
-    
-    text = f"⚙️ <b>Управление: {name}</b>\n\n"
-    text += f"<b>Статус:</b> {status_text}\n"
-    text += f"<b>Режим:</b> {mode_text}\n"
+    fan_text = FAN_MODES.get(str(fan_mode).lower(), str(fan_mode)) if fan_mode else "нет данных"
+
+    rows = [("Статус", status_text), ("Режим", mode_text)]
     if current_temp is not None:
-        text += f"<b>В комнате:</b> {current_temp}°C\n"
+        rows.append(("В комнате", f"{current_temp}°C"))
     if target_temp is not None:
-        text += f"<b>Установлено:</b> {target_temp}°C\n"
-    text += f"<b>Вентилятор:</b> {fan_text}\n"
-    
+        rows.append(("Установлено", f"{target_temp}°C"))
+    rows.append(("Вентилятор", fan_text))
+
     if breather_state:
-        b_state_ru = "Вкл" if breather_state == "on" else "Выкл"
-        b_mode_ru = fan_modes_ru.get(str(breather_mode).lower(), str(breather_mode)) if breather_mode else ""
-        text += f"<b>Бризер:</b> {b_state_ru} {b_mode_ru}\n"
-        
-    return text
+        breather_status = "Вкл" if breather_state == "on" else "Выкл"
+        breather_speed = FAN_MODES.get(str(breather_mode).lower(), str(breather_mode)) if breather_mode else ""
+        rows.append(("Бризер", f"{breather_status} {breather_speed}".strip()))
+
+    return rows
+
+
+def build_ac_text(name, state, current_temp, target_temp, fan_mode, breather_state=None, breather_mode=None, last_mode=None):
+    """Строит текст для подменю кондиционера"""
+    rows = _ac_summary(state, current_temp, target_temp, fan_mode, breather_state, breather_mode, last_mode)
+    lines = [f"⚙️ <b>Управление: {name}</b>\n"]
+    lines += [f"<b>{label}:</b> {value}" for label, value in rows]
+    return "\n".join(lines) + "\n"
+
 
 def build_ac_rich_blocks(name, state, current_temp, target_temp, fan_mode, breather_state=None, breather_mode=None, last_mode=None):
     """Строит rich-блоки для подменю кондиционера"""
-    modes_ru = {
-        "off": "🛑 Выключен",
-        "cool": "❄️ Охлаждение",
-        "heat": "☀️ Обогрев",
-        "dry": "💧 Осушение",
-        "fan_only": "💨 Вентилятор",
-        "auto": "🤖 Авто"
-    }
-    fan_modes_ru = {
-        "auto": "Авто",
-        "low": "Низкая",
-        "medium": "Средняя",
-        "high": "Высокая",
-        "silent": "Тихий",
-        "turbo": "Турбо",
-        "level1": "Скорость 1 (Мин)",
-        "level2": "Скорость 2",
-        "level3": "Скорость 3",
-        "level4": "Скорость 4 (Средн)",
-        "level5": "Скорость 5",
-        "level6": "Скорость 6",
-        "level7": "Скорость 7 (Макс)",
-    }
-    
-    is_on = str(state).lower() != "off"
-    status_text = "🟢 Включен" if is_on else "🔴 Выключен"
-
-    if is_on:
-        mode_text = modes_ru.get(str(state).lower(), str(state))
-    else:
-        active_m = last_mode if last_mode and last_mode != "off" else "cool"
-        mode_text = modes_ru.get(active_m, "❄️ Охлаждение")
-
-    fan_text = fan_modes_ru.get(str(fan_mode).lower(), str(fan_mode)) if fan_mode else "нет данных"
-    
-    rows = [
-        ["Статус", status_text],
-        ["Режим", mode_text],
-    ]
-    if current_temp is not None:
-        rows.append(["В комнате", f"{current_temp}°C"])
-    if target_temp is not None:
-        rows.append(["Установлено", f"{target_temp}°C"])
-    rows.append(["Вентилятор", fan_text])
-    
-    if breather_state:
-        b_state_ru = "Вкл" if breather_state == "on" else "Выкл"
-        b_mode_ru = fan_modes_ru.get(str(breather_mode).lower(), str(breather_mode)) if breather_mode else ""
-        rows.append(["Бризер", f"{b_state_ru} {b_mode_ru}".strip()])
-    
+    rows = _ac_summary(state, current_temp, target_temp, fan_mode, breather_state, breather_mode, last_mode)
     return [
         build_rich_section_heading(f"⚙️ Управление: {name}"),
-        build_rich_table_block(["Параметр", "Значение"], rows, is_bordered=True, is_striped=True)
+        build_rich_table_block(["Параметр", "Значение"], [list(r) for r in rows],
+                               is_bordered=True, is_striped=True)
     ]
 
+
+# ───────────── Настройка таймеров света ─────────────
+
+def _timer_value_text(minutes, is_custom):
+    if not minutes:
+        return "выключен"
+    return f"{minutes} мин{' ✏️' if is_custom else ''}"
+
+
+def build_timers_rich_blocks(overview):
+    """
+    Строит таблицу таймеров света.
+    overview: [(name, entity, minutes|None, is_on, is_custom)].
+    Возвращает (blocks, fallback_text).
+    """
+    heading = "⏱ Таймеры света"
+    hint = "Уведомление приходит, если свет горит дольше таймера. Выбери комнату для настройки."
+
+    if not overview:
+        blocks = [build_rich_section_heading(heading), build_rich_paragraph(hint)]
+        return blocks, f"<b>{heading}</b>\n\n{hint}"
+
+    rows = [
+        ["🟢" if is_on else "⚫", name, _timer_value_text(minutes, is_custom)]
+        for name, _entity, minutes, is_on, is_custom in overview
+    ]
+
+    blocks = [
+        build_rich_section_heading(heading),
+        build_rich_table_block(["", "Комната", "Таймер"], rows),
+        build_rich_paragraph(hint),
+    ]
+
+    fallback_lines = [f"<b>{heading}</b>\n"]
+    fallback_lines += [f"{row[0]} {row[1]}  {row[2]}" for row in rows]
+    fallback_lines.append(f"\n{hint}")
+    return blocks, "\n".join(fallback_lines)
+
+
+def build_timers_keyboard(overview, per_row=2):
+    """Кнопки выбора комнаты для настройки таймера."""
+    buttons = [
+        (f"{name} · {_timer_value_text(minutes, is_custom)}", f"/timer:open:{entity}")
+        for name, entity, minutes, _is_on, is_custom in overview
+    ]
+    keyboard = build_keyboard(buttons, per_row)
+    keyboard.append([("⬅️ Назад", "/back")])
+    return keyboard
+
+
+def build_timer_edit_rich_blocks(name, minutes, default_minutes, is_on):
+    """Экран настройки таймера одной комнаты. Возвращает (blocks, fallback_text)."""
+    heading = f"⏱ Таймер: {name}"
+    rows = [
+        ["Текущее значение", "выключен" if not minutes else f"{minutes} мин"],
+        ["Из config.py", "не задан" if not default_minutes else f"{default_minutes} мин"],
+        ["Свет сейчас", "🟢 горит" if is_on else "⚫ выключен"],
+    ]
+    limits = f"Допустимо {TIMER_CONFIG['min_minutes']}–{TIMER_CONFIG['max_minutes']} мин."
+
+    blocks = [
+        build_rich_section_heading(heading),
+        build_rich_table_block(["Параметр", "Значение"], rows),
+        build_rich_paragraph(limits),
+    ]
+
+    fallback_lines = [f"<b>{heading}</b>\n"]
+    fallback_lines += [f"<b>{row[0]}:</b> {row[1]}" for row in rows]
+    fallback_lines.append(f"\n{limits}")
+    return blocks, "\n".join(fallback_lines)
+
+
+def build_timer_edit_keyboard(entity, minutes, default_minutes=None):
+    """Кнопки правки таймера: шаги из TIMER_CONFIG, пресеты, сброс и выключение."""
+    step_row = [
+        (f"{'➖' if step < 0 else '➕'} {abs(step)}", f"/timer:adjust:{entity}:{step}")
+        for step in TIMER_CONFIG["steps"]
+    ]
+
+    preset_row = [
+        (f"{value} мин", f"/timer:set:{entity}:{value}")
+        for value in (10, 30, 60, 120)
+    ]
+
+    if minutes:
+        toggle_btn = ("🔕 Отключить", f"/timer:set:{entity}:0")
+    else:
+        # Включаем со значением из config.py, а при его отсутствии — с 15 минутами
+        toggle_btn = ("🔔 Включить", f"/timer:set:{entity}:{default_minutes or 15}")
+
+    return [
+        step_row,
+        preset_row,
+        [toggle_btn, ("♻️ По умолчанию", f"/timer:reset:{entity}")],
+        [("⬅️ К таймерам", "/menu:timers"), ("🏠 Главная", "/back")],
+    ]
 
 
 def build_ac_keyboard(entity_id, sub_menu=None, state="off"):

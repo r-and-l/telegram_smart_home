@@ -1,16 +1,15 @@
 import json
-import os
 import urllib.request
 import urllib.error
 from config import TELEGRAM_CONFIG
+from core.store import Store
 
 class TelegramAPI:
-    def __init__(self, app):
+    def __init__(self, app, store=None):
         self.app = app
-        self.state_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "state.json")
-        state = self._load_state()
-        self.main_message_id = state.get("main_message_id")
-        self.chat_id = state.get("chat_id") or TELEGRAM_CONFIG.get("chat_id")
+        self.store = store or Store(app)
+        self.main_message_id = self.store.get("main_message_id")
+        self.chat_id = self.store.get("chat_id") or TELEGRAM_CONFIG.get("chat_id")
         self.bot_token = TELEGRAM_CONFIG.get("bot_token")
         self.last_text = None
         self.last_keyboard = None
@@ -20,29 +19,9 @@ class TelegramAPI:
 
     # ───────────── Персистентное состояние ─────────────
 
-    def _load_state(self):
-        """Загружает сохраненное состояние из файла"""
-        try:
-            if os.path.exists(self.state_file):
-                with open(self.state_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    self.app.log(f"LOADED PERSISTED STATE: {data}")
-                    return data
-        except Exception as e:
-            self.app.log(f"Error loading persisted state: {e}")
-        return {}
-
-    def _save_state(self, message_id=None, chat_id=None):
-        """Сохраняет состояние в файл"""
-        try:
-            state = {
-                "main_message_id": message_id if message_id is not None else self.main_message_id,
-                "chat_id": chat_id if chat_id is not None else self.chat_id,
-            }
-            with open(self.state_file, "w", encoding="utf-8") as f:
-                json.dump(state, f)
-        except Exception as e:
-            self.app.log(f"Error saving persisted state: {e}")
+    def _save_state(self):
+        """Сохраняет id главного сообщения и чата в общее хранилище"""
+        self.store.update(main_message_id=self.main_message_id, chat_id=self.chat_id)
 
     def update_chat_id(self, chat_id):
         """Обновляет ID чата при входящем сообщении"""
@@ -53,14 +32,19 @@ class TelegramAPI:
     def reset_message_id(self):
         """Сброс ID сообщения (например, при команде /start)"""
         self.main_message_id = None
-        self._save_state(message_id=None)
+        self._save_state()
         self.last_text = None
         self.last_keyboard = None
 
     # ───────────── Прямые вызовы Telegram Bot API (Rich Tables) ─────────────
 
-    def _tg_api(self, method, payload, timeout=5):
-        """Выполняет HTTP-запрос к Telegram Bot API."""
+    def _tg_api(self, method, payload, timeout=5, quiet=False):
+        """
+        Выполняет HTTP-запрос к Telegram Bot API.
+        Возвращает разобранный ответ (в том числе для HTTP-ошибок, чтобы
+        вызывающий код мог отличить «сообщения уже нет» от сетевого сбоя),
+        либо None, если ответ получить не удалось.
+        """
         if not self.bot_token:
             return None
         url = f"https://api.telegram.org/bot{self.bot_token}/{method}"
@@ -73,8 +57,12 @@ class TelegramAPI:
                 return result
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8", errors="replace")
-            self.app.log(f"❌ Telegram API error {e.code} for {method}: {body}")
-            return None
+            if not quiet:
+                self.app.log(f"❌ Telegram API error {e.code} for {method}: {body}")
+            try:
+                return json.loads(body)
+            except Exception:
+                return {"ok": False, "error_code": e.code, "description": body}
         except Exception as e:
             self.app.log(f"⚠️ Telegram API request error for {method}: {e}")
             return None
@@ -227,14 +215,23 @@ class TelegramAPI:
                 self._ha_edit_message(self.main_message_id, text, inline_keyboard, parse_mode)
 
     def send_notification(self, text, inline_keyboard=None, parse_mode="html"):
-        """Отправляет всплывающее уведомление"""
+        """Отправляет всплывающее уведомление. Возвращает message_id или None."""
+        if self.bot_token and self.chat_id:
+            payload = {"chat_id": self.chat_id, "text": text, "parse_mode": "HTML"}
+            markup = self._build_inline_markup(inline_keyboard)
+            if markup:
+                payload["reply_markup"] = markup
+            result = self._tg_api("sendMessage", payload)
+            if result and result.get("ok"):
+                return result["result"]["message_id"]
+
         kwargs = {"message": text, "parse_mode": parse_mode}
         if inline_keyboard is not None:
             kwargs["inline_keyboard"] = inline_keyboard
         if self.chat_id:
             kwargs["chat_id"] = self.chat_id
         try:
-            self.app.log(f"🔔 SENDING NOTIFICATION...")
+            self.app.log("🔔 SENDING NOTIFICATION via HA")
             response = self.app.call_service("telegram_bot/send_message", **kwargs)
             if response and "result" in response:
                 return response["result"]["response"]["chats"][0]["message_id"]
@@ -243,7 +240,23 @@ class TelegramAPI:
         return None
 
     def edit_notification(self, message_id, text, inline_keyboard=None, parse_mode="html"):
-        """Редактирует уведомление"""
+        """Редактирует уведомление. Возвращает True при успехе."""
+        if self.bot_token and self.chat_id:
+            payload = {
+                "chat_id": self.chat_id,
+                "message_id": message_id,
+                "text": text,
+                "parse_mode": "HTML",
+            }
+            markup = self._build_inline_markup(inline_keyboard)
+            payload["reply_markup"] = markup or {"inline_keyboard": []}
+            result = self._tg_api("editMessageText", payload)
+            if result and result.get("ok"):
+                return True
+            # «Сообщение не изменилось» — не ошибка
+            if result and "message is not modified" in str(result.get("description", "")):
+                return True
+
         kwargs = {
             "message_id": message_id,
             "message": text,
@@ -252,14 +265,47 @@ class TelegramAPI:
         }
         if self.chat_id:
             kwargs["chat_id"] = self.chat_id
-        self.app.call_service("telegram_bot/edit_message", **kwargs)
+        try:
+            self.app.call_service("telegram_bot/edit_message", **kwargs)
+            return True
+        except Exception as e:
+            self.app.log(f"Failed to edit notification {message_id}: {e}")
+            return False
 
     def delete_notification(self, message_id):
-        """Удаляет уведомление"""
+        """
+        Удаляет уведомление.
+        Возвращает True, если сообщения в чате больше нет (удалено сейчас
+        или отсутствовало), и False, если удалить не удалось — тогда вызов
+        стоит повторить позже.
+        """
+        if self.bot_token and self.chat_id:
+            result = self._tg_api(
+                "deleteMessage",
+                {"chat_id": self.chat_id, "message_id": message_id},
+                quiet=True,
+            )
+            if result and result.get("ok"):
+                self.app.log(f"🗑 Deleted notification {message_id}")
+                return True
+            if result is not None:
+                description = str(result.get("description", "")).lower()
+                # Сообщения уже нет / оно слишком старое — повторять бессмысленно
+                if any(marker in description for marker in (
+                    "message to delete not found",
+                    "message can't be deleted",
+                    "message identifier is not specified",
+                )):
+                    self.app.log(f"🗑 Notification {message_id} already gone: {description}")
+                    return True
+                self.app.log(f"❌ Failed to delete notification {message_id}: {description}")
+
         try:
             kwargs = {"message_id": message_id}
             if self.chat_id:
                 kwargs["chat_id"] = self.chat_id
             self.app.call_service("telegram_bot/delete_message", **kwargs)
+            return True
         except Exception as e:
             self.app.log(f"Failed to delete notification {message_id}: {e}")
+            return False
