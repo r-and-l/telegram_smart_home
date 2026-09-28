@@ -46,6 +46,8 @@ class TableMenu(Menu):
             (name, f"/menu:ac:{entity}" if entity.startswith("climate.") else f"/toggle:{entity}")
             for name, entity in control_devices
         ]
+        if self.category == "lights":
+            buttons.append(("💤 Выключить все", "/lights_off"))
         buttons.append(("⬅️ Назад", "/back"))
 
         return blocks, fallback_text, build_keyboard(buttons, 3), "html"
@@ -275,8 +277,15 @@ class MenuManager:
         """Показывает главное меню"""
         self.current_menu = None
 
+        # Находим кондиционер для прямой кнопки в главном меню
+        ac_device = next(
+            (d for d in devices.by_type("climate")
+             if isinstance(d.get("entity"), str) and d["entity"].startswith("climate.")),
+            None
+        )
+
         # Rich HTML с встроенными кнопками
-        rich_html = rich_views.render_main_menu(CATEGORIES)
+        rich_html = rich_views.render_main_menu(CATEGORIES, ac_device=ac_device)
 
         # Fallback: блоки + inline keyboard
         blocks = [build_rich_section_heading("🏠 Умный дом"), build_rich_paragraph("Выбери раздел:")]

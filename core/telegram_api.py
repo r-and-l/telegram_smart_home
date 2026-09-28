@@ -48,7 +48,7 @@ class TelegramAPI:
         if not self.bot_token:
             return None
         url = f"https://api.telegram.org/bot{self.bot_token}/{method}"
-        data = json.dumps(payload, ensure_ascii=True).encode("ascii")
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -182,12 +182,8 @@ class TelegramAPI:
         """
         Рендерит основное сообщение бота.
 
-        Приоритет:
-        1. rich_html — Rich HTML с кнопками в теле (Bot API 10.3, <tg-button>)
-        2. rich_blocks — блоки + inline_keyboard
-        3. text — обычный HTML через HA-интеграцию
-
-        Никогда не удаляет сообщение при сбоях редактирования.
+        Один вызов к Telegram API (rich_html ИЛИ rich_blocks), при неудаче —
+        fallback через HA. Никогда не делает каскад вызовов к тому же серверу.
         """
         compare_key = rich_html or (json.dumps(rich_blocks, ensure_ascii=False, sort_keys=True) if rich_blocks else text)
 
@@ -198,49 +194,39 @@ class TelegramAPI:
         self.last_text = compare_key
         self.last_keyboard = inline_keyboard
 
-        use_rich_html = bool(rich_html and self.bot_token and self.chat_id)
-        use_rich_blocks = bool(rich_blocks and self.bot_token and self.chat_id)
+        can_use_api = bool(self.bot_token and self.chat_id)
 
-        # ─── 1. Если еще нет ID сообщения — отправляем новое и закрепляем ───
+        # ─── 1. Если ещё нет сообщения — отправляем новое и закрепляем ───
         if self.main_message_id is None:
-            if use_rich_html:
-                msg_id = self._send_rich_message(rich_html=rich_html)
-                if msg_id:
-                    self.main_message_id = msg_id
-                    self._save_state()
-                    self.pin_main_message()
-                    return
+            msg_id = None
 
-            if use_rich_blocks:
-                msg_id = self._send_rich_message(blocks=rich_blocks, inline_keyboard=inline_keyboard)
-                if msg_id:
-                    self.main_message_id = msg_id
-                    self._save_state()
-                    self.pin_main_message()
-                    return
+            if can_use_api:
+                if rich_html:
+                    msg_id = self._send_rich_message(rich_html=rich_html)
+                elif rich_blocks:
+                    msg_id = self._send_rich_message(blocks=rich_blocks, inline_keyboard=inline_keyboard)
 
-            if text:
+            if not msg_id and text:
                 msg_id = self._ha_send_message(text, inline_keyboard, parse_mode)
-                if msg_id:
-                    self.main_message_id = msg_id
-                    self._save_state()
-                    self.pin_main_message()
 
-        # ─── 2. Если сообщение существует — редактируем его в чате ───
+            if msg_id:
+                self.main_message_id = msg_id
+                self._save_state()
+                self.pin_main_message()
+
+        # ─── 2. Если сообщение существует — редактируем ───
         else:
-            if use_rich_html:
-                success = self._edit_rich_message(self.main_message_id, rich_html=rich_html)
-                if success:
-                    return
+            success = False
 
-            if use_rich_blocks:
-                success = self._edit_rich_message(
-                    self.main_message_id, blocks=rich_blocks, inline_keyboard=inline_keyboard
-                )
-                if success:
-                    return
+            if can_use_api:
+                if rich_html:
+                    success = self._edit_rich_message(self.main_message_id, rich_html=rich_html)
+                elif rich_blocks:
+                    success = self._edit_rich_message(
+                        self.main_message_id, blocks=rich_blocks, inline_keyboard=inline_keyboard
+                    )
 
-            if text:
+            if not success and text:
                 self._ha_edit_message(self.main_message_id, text, inline_keyboard, parse_mode)
 
     def send_notification(self, text, inline_keyboard=None, parse_mode="html"):

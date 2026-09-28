@@ -21,6 +21,7 @@ class Router:
         self._exact = {
             "/back": lambda: self.menu_manager.show_main_menu(),
             "/night_mode": lambda: self.automations.activate_night_mode(),
+            "/lights_off": lambda: self._turn_off_all_lights(),
         }
 
         prefixes = {
@@ -169,6 +170,13 @@ class Router:
 
     def _toggle_entity(self, entity):
         self.app.call_service("homeassistant/toggle", entity_id=entity)
+        self.menu_manager.refresh()
+
+    def _turn_off_all_lights(self):
+        """Выключает весь свет из меню освещения."""
+        for _name, entity in devices.controllable("lights"):
+            if self.app.get_state(entity) == "on":
+                self.app.call_service("homeassistant/turn_off", entity_id=entity)
         self.menu_manager.refresh()
 
     def _turn_off(self, entity):

@@ -58,9 +58,7 @@ def _device_time_on(app, entity, state):
 # ───────────── Главное меню ─────────────
 
 def render_main_menu(categories, ac_device=None):
-    """Rich HTML для главного меню с кнопками разделов."""
-    lines = ["<h3>🏠 Умный дом</h3>", "<p>Выбери раздел:</p>"]
-
+    """Rich HTML для главного меню — таблица-сетка с кнопками в ячейках."""
     buttons = [
         (data.get("button_label"), f"/menu:{category}")
         for category, data in categories.items()
@@ -71,10 +69,16 @@ def render_main_menu(categories, ac_device=None):
     buttons.append(("⏱ Таймеры", "/menu:timers"))
     buttons.append(("🌙 Ночной режим", "/night_mode"))
 
+    # Собираем таблицу по 2 кнопки в ряду
+    lines = ["<h3>🏠 Умный дом</h3>", '<table compact>']
     for i in range(0, len(buttons), 2):
-        pair = buttons[i:i+2]
-        row_btns = [_btn(text, data) for text, data in pair]
-        lines.append(_btn_row(row_btns, align="center"))
+        pair = buttons[i:i + 2]
+        cells = "".join(
+            f'<td align="center">{_btn(text, data)}</td>'
+            for text, data in pair
+        )
+        lines.append(f"<tr>{cells}</tr>")
+    lines.append("</table>")
 
     return "\n".join(lines)
 
@@ -113,7 +117,10 @@ def render_device_menu(app, title, category, device_list):
 
         lines.append(_btn_row(row_parts))
 
-    lines.append(_btn_row([_btn("⬅️ Назад", "/back")], align="center"))
+    nav_btns = [_btn("⬅️ Назад", "/back")]
+    if category == "lights":
+        nav_btns.insert(0, _btn("💤 Выключить все", "/lights_off", "danger"))
+    lines.append(_btn_row(nav_btns, align="center"))
     return "\n".join(lines)
 
 
@@ -124,7 +131,11 @@ def render_climate_menu(app, title, device_list, sensor_items):
     html = render_device_menu(app, title, "climate", device_list)
 
     if sensor_items:
-        sensor_lines = ["<h4>🌡️ Датчики</h4>"]
+        sensor_lines = [
+            "<h4>🌡️ Датчики</h4>",
+            '<table bordered striped compact>',
+            "<tr><th>Датчик</th><th>Температура</th><th>Влажность</th></tr>",
+        ]
 
         for s in sensor_items:
             raw_name = s["name"]
@@ -158,7 +169,13 @@ def render_climate_menu(app, title, device_list, sensor_items):
                 val = app.get_state(entity_data)
                 temp_str = str(val) if val is not None else "нет данных"
 
-            sensor_lines.append(f"<p>{escape(clean_name)}: {temp_str} | {hum_str}</p>")
+            sensor_lines.append(
+                f"<tr><td>{escape(clean_name)}</td>"
+                f"<td align=\"center\">{temp_str}</td>"
+                f"<td align=\"center\">{hum_str}</td></tr>"
+            )
+
+        sensor_lines.append("</table>")
 
         # Вставляем датчики перед последней кнопкой "Назад"
         parts = html.rsplit("<tg-button-row", 1)
