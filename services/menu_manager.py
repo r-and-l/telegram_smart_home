@@ -1,5 +1,6 @@
 from config import CATEGORIES, BREATHER_ENTITY
 from core import devices
+from ui import rich_views
 from ui.views import (
     build_keyboard,
     build_menu_rich_blocks,
@@ -29,6 +30,10 @@ class Menu:
         """Возвращает кортеж (rich_blocks, fallback_text, inline_keyboard, parse_mode)"""
         raise NotImplementedError
 
+    def render_html(self):
+        """Возвращает Rich HTML строку с встроенными кнопками (None = не поддерживается)."""
+        return None
+
 
 class TableMenu(Menu):
     """Стандартное меню с таблицей управляемых устройств и кнопками-переключателями"""
@@ -45,6 +50,12 @@ class TableMenu(Menu):
 
         return blocks, fallback_text, build_keyboard(buttons, 3), "html"
 
+    def render_html(self):
+        return rich_views.render_device_menu(
+            self.app, self.title, self.category,
+            devices.controllable(self.category),
+        )
+
 
 class ClimateMenu(TableMenu):
     """Климатическое меню с таблицей управления и таблицей датчиков под ней"""
@@ -59,6 +70,14 @@ class ClimateMenu(TableMenu):
             fallback_text += sensor_fallback
 
         return blocks, fallback_text, inline_keyboard, parse_mode
+
+    def render_html(self):
+        sensor_items = [d for d in devices.by_type(self.category) if d.get("is_sensor")]
+        return rich_views.render_climate_menu(
+            self.app, self.title,
+            devices.controllable(self.category),
+            sensor_items,
+        )
 
 
 class WeatherMenu(Menu):
@@ -77,6 +96,12 @@ class WeatherMenu(Menu):
         inline_keyboard = build_keyboard([("⬅️ Назад", "/back")], 2)
         return blocks, "\n".join(lines) + "\n", inline_keyboard, "html"
 
+    def render_html(self):
+        return rich_views.render_weather_menu(
+            self.app, self.title,
+            devices.controllable(self.category),
+        )
+
 
 class ACMenu(Menu):
     """Меню управления кондиционером"""
@@ -85,14 +110,12 @@ class ACMenu(Menu):
         self.entity_id = entity_id
         self.sub_menu = sub_menu
 
-    def render(self):
-        name = devices.name_of(self.entity_id, default="Кондиционер")
-
+    def _get_state_data(self):
+        """Собирает все данные о состоянии кондиционера."""
         state = self.app.get_state(self.entity_id)
         current_temp = self.app.get_state(self.entity_id, attribute="current_temperature")
         target_temp = self.app.get_state(self.entity_id, attribute="temperature")
         fan_mode = self.app.get_state(self.entity_id, attribute="fan_mode")
-
         breather_state = self.app.get_state(BREATHER_ENTITY)
         breather_mode = self.app.get_state(BREATHER_ENTITY, attribute="preset_mode")
 
@@ -101,12 +124,43 @@ class ACMenu(Menu):
             self.app.last_ac_modes[self.entity_id] = str(state).lower()
         last_mode = self.app.last_ac_modes.get(self.entity_id, "cool")
 
-        args = (name, state, current_temp, target_temp, fan_mode, breather_state, breather_mode)
-        blocks = build_ac_rich_blocks(*args, last_mode=last_mode)
-        fallback_text = build_ac_text(*args, last_mode=last_mode)
-        inline_keyboard = build_ac_keyboard(self.entity_id, sub_menu=self.sub_menu, state=state)
+        return {
+            "name": devices.name_of(self.entity_id, default="Кондиционер"),
+            "state": state,
+            "current_temp": current_temp,
+            "target_temp": target_temp,
+            "fan_mode": fan_mode,
+            "breather_state": breather_state,
+            "breather_mode": breather_mode,
+            "last_mode": last_mode,
+        }
+
+    def render(self):
+        d = self._get_state_data()
+
+        args = (d["name"], d["state"], d["current_temp"], d["target_temp"],
+                d["fan_mode"], d["breather_state"], d["breather_mode"])
+        blocks = build_ac_rich_blocks(*args, last_mode=d["last_mode"])
+        fallback_text = build_ac_text(*args, last_mode=d["last_mode"])
+        inline_keyboard = build_ac_keyboard(self.entity_id, sub_menu=self.sub_menu, state=d["state"])
 
         return blocks, fallback_text, inline_keyboard, "html"
+
+    def render_html(self):
+        d = self._get_state_data()
+
+        return rich_views.render_ac_menu(
+            name=d["name"],
+            state=d["state"],
+            current_temp=d["current_temp"],
+            target_temp=d["target_temp"],
+            fan_mode=d["fan_mode"],
+            entity_id=self.entity_id,
+            breather_state=d["breather_state"],
+            breather_mode=d["breather_mode"],
+            last_mode=d["last_mode"],
+            sub_menu=self.sub_menu,
+        )
 
 
 class TimersMenu(Menu):
@@ -119,6 +173,10 @@ class TimersMenu(Menu):
         overview = self.light_monitor.timers_overview()
         blocks, fallback_text = build_timers_rich_blocks(overview)
         return blocks, fallback_text, build_timers_keyboard(overview), "html"
+
+    def render_html(self):
+        overview = self.light_monitor.timers_overview()
+        return rich_views.render_timers_menu(overview)
 
 
 class TimerEditMenu(Menu):
@@ -140,6 +198,18 @@ class TimerEditMenu(Menu):
         )
         keyboard = build_timer_edit_keyboard(entity, minutes, default_minutes)
         return blocks, fallback_text, keyboard, "html"
+
+    def render_html(self):
+        entity = self.entity_id
+        minutes = self.light_monitor.timer_minutes(entity)
+        default_minutes = self.light_monitor.default_timer_minutes(entity)
+        return rich_views.render_timer_edit_menu(
+            devices.name_of(entity),
+            entity,
+            minutes,
+            default_minutes,
+            self.app.get_state(entity) == "on",
+        )
 
 
 class MenuManager:
@@ -204,12 +274,19 @@ class MenuManager:
     def show_main_menu(self):
         """Показывает главное меню"""
         self.current_menu = None
+
+        # Rich HTML с встроенными кнопками
+        rich_html = rich_views.render_main_menu(CATEGORIES)
+
+        # Fallback: блоки + inline keyboard
         blocks = [build_rich_section_heading("🏠 Умный дом"), build_rich_paragraph("Выбери раздел:")]
+
         self.telegram.render_message(
             text="🏠 <b>Умный дом</b>\n\nВыбери раздел:",
             inline_keyboard=MAIN_KEYBOARD_INLINE,
             parse_mode="html",
-            rich_blocks=blocks
+            rich_blocks=blocks,
+            rich_html=rich_html,
         )
 
     def show_menu(self, category):
@@ -266,10 +343,13 @@ class MenuManager:
         if not menu:
             return
 
+        # Приоритет: Rich HTML с встроенными кнопками → блоки + inline keyboard → текст
+        rich_html = menu.render_html()
         blocks, fallback_text, inline_keyboard, parse_mode = menu.render()
         self.telegram.render_message(
             text=fallback_text,
             inline_keyboard=inline_keyboard,
             parse_mode=parse_mode,
-            rich_blocks=blocks
+            rich_blocks=blocks,
+            rich_html=rich_html,
         )

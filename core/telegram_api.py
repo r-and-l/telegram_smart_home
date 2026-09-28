@@ -82,36 +82,43 @@ class TelegramAPI:
             keyboard.append(kb_row)
         return {"inline_keyboard": keyboard}
 
-    def _send_rich_message(self, blocks, inline_keyboard=None):
-        """Отправляет Rich Message с нативными графическими таблицами Telegram."""
-        payload = {
-            "chat_id": self.chat_id,
-            "rich_message": {"blocks": blocks}
-        }
-        markup = self._build_inline_markup(inline_keyboard)
-        if markup:
-            payload["reply_markup"] = markup
+    def _send_rich_message(self, blocks=None, inline_keyboard=None, rich_html=None):
+        """Отправляет Rich Message — через HTML (кнопки в теле) или blocks + inline_keyboard."""
+        payload = {"chat_id": self.chat_id}
 
-        self.app.log(f"📤 SENDING RICH TABLE MESSAGE to chat {self.chat_id}")
+        if rich_html:
+            # Rich HTML: кнопки встроены в тело через <tg-button>, reply_markup не нужен
+            payload["rich_message"] = {"html": rich_html}
+        else:
+            payload["rich_message"] = {"blocks": blocks}
+            markup = self._build_inline_markup(inline_keyboard)
+            if markup:
+                payload["reply_markup"] = markup
+
+        self.app.log(f"📤 SENDING RICH MESSAGE to chat {self.chat_id}")
         result = self._tg_api("sendRichMessage", payload)
         if result and result.get("ok"):
             msg_id = result["result"]["message_id"]
-            self.app.log(f"📤 Rich table message sent, message_id={msg_id}")
+            self.app.log(f"📤 Rich message sent, message_id={msg_id}")
             return msg_id
         return None
 
-    def _edit_rich_message(self, message_id, blocks, inline_keyboard=None):
-        """Редактирует Rich Message с графическими таблицами."""
+    def _edit_rich_message(self, message_id, blocks=None, inline_keyboard=None, rich_html=None):
+        """Редактирует Rich Message — через HTML или blocks."""
         payload = {
             "chat_id": self.chat_id,
             "message_id": message_id,
-            "rich_message": {"blocks": blocks}
         }
-        markup = self._build_inline_markup(inline_keyboard)
-        if markup:
-            payload["reply_markup"] = markup
 
-        self.app.log(f"✏️ EDITING RICH TABLE MESSAGE (message_id: {message_id})")
+        if rich_html:
+            payload["rich_message"] = {"html": rich_html}
+        else:
+            payload["rich_message"] = {"blocks": blocks}
+            markup = self._build_inline_markup(inline_keyboard)
+            if markup:
+                payload["reply_markup"] = markup
+
+        self.app.log(f"✏️ EDITING RICH MESSAGE (message_id: {message_id})")
         result = self._tg_api("editMessageText", payload)
         return result and result.get("ok")
 
@@ -170,13 +177,19 @@ class TelegramAPI:
 
     # ───────────── Публичный интерфейс ─────────────
 
-    def render_message(self, text=None, inline_keyboard=None, parse_mode="html", rich_blocks=None):
+    def render_message(self, text=None, inline_keyboard=None, parse_mode="html",
+                       rich_blocks=None, rich_html=None):
         """
         Рендерит основное сообщение бота.
-        Приоритет: Нативные графические таблицы Telegram (sendRichMessage / editMessageText).
+
+        Приоритет:
+        1. rich_html — Rich HTML с кнопками в теле (Bot API 10.3, <tg-button>)
+        2. rich_blocks — блоки + inline_keyboard
+        3. text — обычный HTML через HA-интеграцию
+
         Никогда не удаляет сообщение при сбоях редактирования.
         """
-        compare_key = json.dumps(rich_blocks, ensure_ascii=False, sort_keys=True) if rich_blocks else text
+        compare_key = rich_html or (json.dumps(rich_blocks, ensure_ascii=False, sort_keys=True) if rich_blocks else text)
 
         if self.main_message_id is not None:
             if self.last_text == compare_key and self.last_keyboard == inline_keyboard:
@@ -185,12 +198,21 @@ class TelegramAPI:
         self.last_text = compare_key
         self.last_keyboard = inline_keyboard
 
-        use_rich = bool(rich_blocks and self.bot_token and self.chat_id)
+        use_rich_html = bool(rich_html and self.bot_token and self.chat_id)
+        use_rich_blocks = bool(rich_blocks and self.bot_token and self.chat_id)
 
-        # ─── 1. Если еще нет ID сообщения — отправляем новое (таблица или текст) и закрепляем ───
+        # ─── 1. Если еще нет ID сообщения — отправляем новое и закрепляем ───
         if self.main_message_id is None:
-            if use_rich:
-                msg_id = self._send_rich_message(rich_blocks, inline_keyboard)
+            if use_rich_html:
+                msg_id = self._send_rich_message(rich_html=rich_html)
+                if msg_id:
+                    self.main_message_id = msg_id
+                    self._save_state()
+                    self.pin_main_message()
+                    return
+
+            if use_rich_blocks:
+                msg_id = self._send_rich_message(blocks=rich_blocks, inline_keyboard=inline_keyboard)
                 if msg_id:
                     self.main_message_id = msg_id
                     self._save_state()
@@ -206,8 +228,15 @@ class TelegramAPI:
 
         # ─── 2. Если сообщение существует — редактируем его в чате ───
         else:
-            if use_rich:
-                success = self._edit_rich_message(self.main_message_id, rich_blocks, inline_keyboard)
+            if use_rich_html:
+                success = self._edit_rich_message(self.main_message_id, rich_html=rich_html)
+                if success:
+                    return
+
+            if use_rich_blocks:
+                success = self._edit_rich_message(
+                    self.main_message_id, blocks=rich_blocks, inline_keyboard=inline_keyboard
+                )
                 if success:
                     return
 
