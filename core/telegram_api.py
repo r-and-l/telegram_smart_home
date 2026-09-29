@@ -13,6 +13,7 @@ class TelegramAPI:
         self.bot_token = TELEGRAM_CONFIG.get("bot_token")
         self.last_text = None
         self.last_keyboard = None
+        self._opener = self._build_opener()
 
         self.app.log(f"TelegramAPI initialized: bot_token={'SET' if self.bot_token else 'NOT SET'}, "
                      f"chat_id={self.chat_id}, main_message_id={self.main_message_id}")
@@ -38,6 +39,25 @@ class TelegramAPI:
 
     # ───────────── Прямые вызовы Telegram Bot API (Rich Tables) ─────────────
 
+    def _build_opener(self):
+        """Создаёт urllib opener, опционально через SOCKS5 прокси."""
+        proxy = TELEGRAM_CONFIG.get("proxy")
+        if proxy and proxy.startswith("socks5://"):
+            try:
+                import socks
+                from sockshandler import SocksiPyHandler
+                addr = proxy.replace("socks5://", "")
+                host, port = addr.split(":")
+                opener = urllib.request.build_opener(
+                    SocksiPyHandler(socks.SOCKS5, host, int(port))
+                )
+                self.app.log(f"🌐 Telegram API proxy: {proxy}")
+                return opener
+            except ImportError:
+                self.app.log("⚠️ PySocks не установлен, прокси не используется. "
+                             "Установите: pip install PySocks")
+        return urllib.request.build_opener()
+
     def _tg_api(self, method, payload, timeout=5, quiet=False):
         """
         Выполняет HTTP-запрос к Telegram Bot API.
@@ -51,7 +71,7 @@ class TelegramAPI:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with self._opener.open(req, timeout=timeout) as resp:
                 result = json.loads(resp.read().decode("utf-8"))
                 self.app.log(f"✅ Telegram API {method} OK")
                 return result
