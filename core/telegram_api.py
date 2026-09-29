@@ -46,16 +46,20 @@ class TelegramAPI:
             try:
                 import socks
                 from sockshandler import SocksiPyHandler
-                addr = proxy.replace("socks5://", "")
-                host, port = addr.split(":")
-                opener = urllib.request.build_opener(
-                    SocksiPyHandler(socks.SOCKS5, host, int(port))
-                )
-                self.app.log(f"🌐 Telegram API proxy: {proxy}")
-                return opener
             except ImportError:
-                self.app.log("⚠️ PySocks не установлен, прокси не используется. "
-                             "Установите: pip install PySocks")
+                self.app.log("📦 Устанавливаю PySocks для прокси...")
+                import subprocess
+                subprocess.check_call(["pip", "install", "-q", "PySocks"])
+                import socks
+                from sockshandler import SocksiPyHandler
+
+            addr = proxy.replace("socks5://", "")
+            host, port = addr.split(":")
+            opener = urllib.request.build_opener(
+                SocksiPyHandler(socks.SOCKS5, host, int(port))
+            )
+            self.app.log(f"🌐 Telegram API proxy: {proxy}")
+            return opener
         return urllib.request.build_opener()
 
     def _tg_api(self, method, payload, timeout=5, quiet=False):
