@@ -1,8 +1,10 @@
 import json
 import urllib.request
 import urllib.error
+import time
 from config import TELEGRAM_CONFIG
 from core.store import Store
+from core.route_optimizer import Route, RouteOptimizer
 
 class TelegramAPI:
     def __init__(self, app, store=None):
@@ -13,11 +15,14 @@ class TelegramAPI:
         self.bot_token = TELEGRAM_CONFIG.get("bot_token")
         self.last_text = None
         self.last_keyboard = None
-        self._openers, self._opener_labels = self._build_openers()
-        self._opener_idx = 0  # текущий лучший прокси
+        self._active_route_label = None
+
+        routes = self._build_routes()
+        self.route_optimizer = RouteOptimizer(routes, app=self.app)
 
         self.app.log(f"TelegramAPI initialized: bot_token={'SET' if self.bot_token else 'NOT SET'}, "
-                     f"chat_id={self.chat_id}, main_message_id={self.main_message_id}")
+                     f"chat_id={self.chat_id}, main_message_id={self.main_message_id}, "
+                     f"routes={len(routes)}")
 
     # ───────────── Персистентное состояние ─────────────
 
@@ -40,17 +45,16 @@ class TelegramAPI:
 
     # ───────────── Прямые вызовы Telegram Bot API (Rich Tables) ─────────────
 
-    def _build_openers(self):
+    def _build_routes(self):
         """
-        Создаёт список urllib opener'ов из конфига.
+        Создаёт список объектов Route из конфига.
         Поддерживает: список прокси (или одну строку), с/без аутентификации.
         Форматы прокси:
           "socks5://host:port"
           "socks5://user:pass@host:port"
         Прямое подключение (без прокси) всегда добавляется последним как fallback.
         """
-        openers = []
-        labels = []
+        routes = []
 
         proxy_cfg = TELEGRAM_CONFIG.get("proxy")
         if proxy_cfg:
@@ -91,44 +95,54 @@ class TelegramAPI:
                 handler_cls(socks_mod.SOCKS5, host, int(port),
                             username=username, password=password)
             )
-            openers.append(opener)
             label = f"socks5://{host}:{port}" + (" (auth)" if username else "")
-            labels.append(label)
-            self.app.log(f"[PROXY] #{len(openers)}: {label}")
+            route = Route(index=len(routes), opener=opener, label=label)
+            routes.append(route)
+            self.app.log(f"[PROXY] #{len(routes)}: {label}")
 
-        # Прямое подключение — всегда последний fallback
-        openers.append(urllib.request.build_opener())
-        labels.append("direct")
-        self.app.log(f"[PROXY] Fallback: direct connection ({len(openers)} options total)")
+        # Прямое подключение — всегда доступный маршрут
+        direct_route = Route(index=len(routes), opener=urllib.request.build_opener(), label="direct")
+        routes.append(direct_route)
+        self.app.log(f"[PROXY] Direct connection added ({len(routes)} total routes)")
 
-        return openers, labels
+        return routes
+
+    def benchmark_routes(self, kwargs=None):
+        """Фоновый замер пинга всех маршрутов через легкий getMe запрос."""
+        return self.route_optimizer.benchmark(self.bot_token, timeout=4)
 
     def _tg_api(self, method, payload, timeout=8, quiet=False):
         """
         Выполняет HTTP-запрос к Telegram Bot API.
-        При таймауте пробует следующий opener из списка.
+        Всегда использует самый быстрый доступный маршрут, замеряя время ответа.
+        При ошибке мгновенно пробует следующий по скорости маршрут.
         """
         if not self.bot_token:
             return None
         url = f"https://api.telegram.org/bot{self.bot_token}/{method}"
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
-        # Пробуем opener'ы начиная с текущего лучшего
-        n = len(self._openers)
-        for attempt in range(n):
-            idx = (self._opener_idx + attempt) % n
-            opener = self._openers[idx]
+        ordered_routes = self.route_optimizer.get_ordered_routes()
+        n = len(ordered_routes)
+
+        for attempt, route in enumerate(ordered_routes):
             req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+            t0 = time.monotonic()
             try:
-                with opener.open(req, timeout=timeout) as resp:
+                with route.opener.open(req, timeout=timeout) as resp:
+                    dur = time.monotonic() - t0
+                    route.record_success(dur)
                     result = json.loads(resp.read().decode("utf-8"))
-                    # Запоминаем работающий opener
-                    if idx != self._opener_idx:
-                        self.app.log(f"[FAILOVER] Switched to proxy: {self._opener_labels[idx]}")
-                        self._opener_idx = idx
-                    self.app.log(f"[OK] Telegram API {method} OK")
+
+                    if route.label != self._active_route_label:
+                        self.app.log(f"[ROUTE] Active route: {route.label} ({int(dur * 1000)}ms)")
+                        self._active_route_label = route.label
+                    self.app.log(f"[OK] Telegram API {method} OK ({int(dur * 1000)}ms via {route.label})")
                     return result
             except urllib.error.HTTPError as e:
+                # HTTP-ответ получен — сам маршрут работает исправно
+                dur = time.monotonic() - t0
+                route.record_success(dur)
                 body = e.read().decode("utf-8", errors="replace")
                 if not quiet:
                     self.app.log(f"[ERROR] Telegram API error {e.code} for {method}: {body}")
@@ -137,11 +151,12 @@ class TelegramAPI:
                 except Exception:
                     return {"ok": False, "error_code": e.code, "description": body}
             except Exception as e:
-                label = self._opener_labels[idx]
+                dur = time.monotonic() - t0
+                route.record_failure(e)
                 if attempt < n - 1:
-                    self.app.log(f"[TIMEOUT] {label} timeout for {method}, trying next...")
+                    self.app.log(f"[TIMEOUT] {route.label} failed ({e}), trying next fastest route...")
                 else:
-                    self.app.log(f"[ERROR] Telegram API request error for {method}: {e}")
+                    self.app.log(f"[ERROR] All {n} Telegram API routes failed for {method}: {e}")
         return None
 
     def _build_inline_markup(self, inline_keyboard):
