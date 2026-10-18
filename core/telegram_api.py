@@ -103,7 +103,7 @@ class TelegramAPI:
 
         return openers, labels
 
-    def _tg_api(self, method, payload, timeout=5, quiet=False):
+    def _tg_api(self, method, payload, timeout=8, quiet=False):
         """
         Выполняет HTTP-запрос к Telegram Bot API.
         При таймауте пробует следующий opener из списка.
