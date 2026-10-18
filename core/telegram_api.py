@@ -2,9 +2,22 @@ import json
 import urllib.request
 import urllib.error
 import time
+import socket
 from config import TELEGRAM_CONFIG
 from core.store import Store
 from core.route_optimizer import Route, RouteOptimizer
+
+# Принудительно используем IPv4 для Telegram, т.к. на многих роутерах (включая OpenWrt с туннелями)
+# IPv6 локально включён, но туннели к Telegram не имеют связности по IPv6, из-за чего рукопожатие зависает.
+_orig_getaddrinfo = socket.getaddrinfo
+
+def _telegram_ipv4_getaddrinfo(host, port, family=0, *args, **kwargs):
+    if host and "telegram.org" in str(host):
+        family = socket.AF_INET
+    return _orig_getaddrinfo(host, port, family, *args, **kwargs)
+
+if socket.getaddrinfo != _telegram_ipv4_getaddrinfo:
+    socket.getaddrinfo = _telegram_ipv4_getaddrinfo
 
 class TelegramAPI:
     def __init__(self, app, store=None):
@@ -127,7 +140,7 @@ class TelegramAPI:
 
     def benchmark_routes(self, kwargs=None):
         """Фоновый замер пинга всех маршрутов через легкий getMe запрос."""
-        return self.route_optimizer.benchmark(self.bot_token, timeout=8)
+        return self.route_optimizer.benchmark(self.bot_token, timeout=3.5)
 
     def _tg_api(self, method, payload, timeout=8, quiet=False):
         """
