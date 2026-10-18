@@ -66,39 +66,57 @@ class TelegramAPI:
         handler_cls = None
 
         for proxy in proxies:
-            if not proxy or not proxy.startswith("socks5://"):
+            if not proxy or not isinstance(proxy, str):
                 continue
 
-            # Lazy import + auto-install PySocks
-            if socks_mod is None:
-                try:
-                    import socks as _s
-                    from sockshandler import SocksiPyHandler as _h
-                except ImportError:
-                    self.app.log("[SETUP] Installing PySocks for proxy...")
-                    import subprocess
-                    subprocess.check_call(["pip", "install", "-q", "PySocks"])
-                    import socks as _s
-                    from sockshandler import SocksiPyHandler as _h
-                socks_mod, handler_cls = _s, _h
+            # 1. HTTP / HTTPS прокси (urllib поддерживает нативно)
+            if proxy.startswith("http://") or proxy.startswith("https://"):
+                opener = urllib.request.build_opener(
+                    urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+                )
+                route = Route(index=len(routes), opener=opener, label=proxy)
+                routes.append(route)
+                self.app.log(f"[PROXY] #{len(routes)}: {proxy} (HTTP)")
+                continue
 
-            # Разбираем socks5://[user:pass@]host:port
-            addr = proxy.replace("socks5://", "")
-            username = password = None
-            if "@" in addr:
-                creds, addr = addr.rsplit("@", 1)
-                if ":" in creds:
-                    username, password = creds.split(":", 1)
-            host, port = addr.split(":")
+            # 2. SOCKS5 прокси
+            if proxy.startswith("socks5://") or proxy.startswith("socks5h://"):
+                # Lazy import + auto-install PySocks
+                if socks_mod is None:
+                    try:
+                        import socks as _s
+                        from sockshandler import SocksiPyHandler as _h
+                    except ImportError:
+                        self.app.log("[SETUP] Installing PySocks for proxy...")
+                        import subprocess
+                        subprocess.check_call(["pip", "install", "-q", "PySocks"])
+                        import socks as _s
+                        from sockshandler import SocksiPyHandler as _h
+                    socks_mod, handler_cls = _s, _h
 
-            opener = urllib.request.build_opener(
-                handler_cls(socks_mod.SOCKS5, host, int(port),
-                            username=username, password=password)
-            )
-            label = f"socks5://{host}:{port}" + (" (auth)" if username else "")
-            route = Route(index=len(routes), opener=opener, label=label)
-            routes.append(route)
-            self.app.log(f"[PROXY] #{len(routes)}: {label}")
+                # socks5h:// — резолв DNS на стороне прокси (rdns=True)
+                # socks5:// — локальный резолв DNS (rdns=False, решает проблему зависания DNS на роутере)
+                use_remote_dns = proxy.startswith("socks5h://")
+                clean_addr = proxy.replace("socks5h://", "").replace("socks5://", "")
+
+                username = password = None
+                if "@" in clean_addr:
+                    creds, clean_addr = clean_addr.rsplit("@", 1)
+                    if ":" in creds:
+                        username, password = creds.split(":", 1)
+                host, port = clean_addr.split(":")
+
+                opener = urllib.request.build_opener(
+                    handler_cls(socks_mod.SOCKS5, host, int(port),
+                                rdns=use_remote_dns,
+                                username=username, password=password)
+                )
+                dns_info = "remote-dns" if use_remote_dns else "local-dns"
+                auth_info = ", auth" if username else ""
+                label = f"socks5://{host}:{port} ({dns_info}{auth_info})"
+                route = Route(index=len(routes), opener=opener, label=label)
+                routes.append(route)
+                self.app.log(f"[PROXY] #{len(routes)}: {label}")
 
         # Прямое подключение — всегда доступный маршрут
         direct_route = Route(index=len(routes), opener=urllib.request.build_opener(), label="direct")
@@ -109,7 +127,7 @@ class TelegramAPI:
 
     def benchmark_routes(self, kwargs=None):
         """Фоновый замер пинга всех маршрутов через легкий getMe запрос."""
-        return self.route_optimizer.benchmark(self.bot_token, timeout=4)
+        return self.route_optimizer.benchmark(self.bot_token, timeout=8)
 
     def _tg_api(self, method, payload, timeout=8, quiet=False):
         """

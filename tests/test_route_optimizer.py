@@ -116,6 +116,27 @@ class RouteOptimizerTestCase(unittest.TestCase):
             self.assertTrue(direct_route.is_alive)
             self.assertEqual(api.route_optimizer.active_route.label, "direct")
 
+    def test_proxy_formats_http_and_socks5h(self):
+        app_mock = MagicMock()
+        store_mock = MagicMock()
+        store_mock.get.return_value = None
+
+        with patch("core.telegram_api.TELEGRAM_CONFIG", {
+            "bot_token": "fake_token",
+            "chat_id": 12345,
+            "proxy": [
+                "http://192.168.1.1:2080",
+                "socks5h://user:pass@192.168.1.1:1080",
+            ]
+        }):
+            api = TelegramAPI(app_mock, store=store_mock)
+            # 1 http + 1 socks5h + 1 direct = 3 routes
+            self.assertEqual(len(api.route_optimizer.routes), 3)
+            labels = [r.label for r in api.route_optimizer.routes]
+            self.assertIn("http://192.168.1.1:2080", labels)
+            self.assertIn("direct", labels)
+            self.assertTrue(any("remote-dns" in l for l in labels))
+
 
 if __name__ == "__main__":
     unittest.main()

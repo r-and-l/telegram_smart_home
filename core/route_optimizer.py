@@ -71,7 +71,7 @@ class RouteOptimizer:
         """Возвращает маршруты, отсортированные от самого быстрого к худшему."""
         return sorted(self.routes, key=lambda r: r.score)
 
-    def benchmark(self, bot_token, timeout=4):
+    def benchmark(self, bot_token, timeout=8):
         """
         Тестирует все маршруты легким запросом getMe.
         Возвращает лучший маршрут.
