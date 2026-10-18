@@ -129,7 +129,7 @@ class LightMonitor:
 
         self.timer_overrides[entity] = value
         self.store.set("timers", self.timer_overrides)
-        self.app.log(f"⏱ Timer for {entity} set to {value or 'OFF'} min")
+        self.app.log(f"[TIMER] Timer for {entity} set to {value or 'OFF'} min")
 
         # Применяем новое значение немедленно
         if value and self.app.get_state(entity) == "on":
@@ -270,7 +270,7 @@ class LightMonitor:
         """Отправляет индивидуальное уведомление (или обновляет уже существующее)"""
         existing = self._notification_of(entity)
         if existing:
-            self.app.log(f"⏭ Notification for {entity} already exists (msg {existing}), skipping")
+            self.app.log(f"[SKIP] Notification for {entity} already exists (msg {existing}), skipping")
             return
 
         text, keyboard = self._notification_content([entity])
@@ -280,7 +280,7 @@ class LightMonitor:
             self._save_notifications()
             self.app.log(f"Sent individual notification for {entity}")
         else:
-            self.app.log(f"⚠️ Failed to send notification for {entity}, will retry on next reconcile")
+            self.app.log(f"[WARN] Failed to send notification for {entity}, will retry on next reconcile")
 
     def _send_group_notification(self, entities):
         """Отправляет групповое уведомление, убирая ранее отправленные по этим сущностям"""
@@ -295,7 +295,7 @@ class LightMonitor:
             self._save_notifications()
             self.app.log(f"Sent group notification for {entities}")
         else:
-            self.app.log(f"⚠️ Failed to send group notification for {entities}, will retry on next reconcile")
+            self.app.log(f"[WARN] Failed to send group notification for {entities}, will retry on next reconcile")
         for entity in entities:
             self.pending_group_notifications.pop(entity, None)
 

@@ -71,7 +71,7 @@ class TelegramAPI:
                     import socks as _s
                     from sockshandler import SocksiPyHandler as _h
                 except ImportError:
-                    self.app.log("📦 Устанавливаю PySocks для прокси...")
+                    self.app.log("[SETUP] Installing PySocks for proxy...")
                     import subprocess
                     subprocess.check_call(["pip", "install", "-q", "PySocks"])
                     import socks as _s
@@ -94,12 +94,12 @@ class TelegramAPI:
             openers.append(opener)
             label = f"socks5://{host}:{port}" + (" (auth)" if username else "")
             labels.append(label)
-            self.app.log(f"🌐 Прокси #{len(openers)}: {label}")
+            self.app.log(f"[PROXY] #{len(openers)}: {label}")
 
         # Прямое подключение — всегда последний fallback
         openers.append(urllib.request.build_opener())
         labels.append("direct")
-        self.app.log(f"🌐 Fallback: прямое подключение (всего {len(openers)} вариантов)")
+        self.app.log(f"[PROXY] Fallback: direct connection ({len(openers)} options total)")
 
         return openers, labels
 
@@ -124,14 +124,14 @@ class TelegramAPI:
                     result = json.loads(resp.read().decode("utf-8"))
                     # Запоминаем работающий opener
                     if idx != self._opener_idx:
-                        self.app.log(f"🔄 Переключился на прокси: {self._opener_labels[idx]}")
+                        self.app.log(f"[FAILOVER] Switched to proxy: {self._opener_labels[idx]}")
                         self._opener_idx = idx
-                    self.app.log(f"✅ Telegram API {method} OK")
+                    self.app.log(f"[OK] Telegram API {method} OK")
                     return result
             except urllib.error.HTTPError as e:
                 body = e.read().decode("utf-8", errors="replace")
                 if not quiet:
-                    self.app.log(f"❌ Telegram API error {e.code} for {method}: {body}")
+                    self.app.log(f"[ERROR] Telegram API error {e.code} for {method}: {body}")
                 try:
                     return json.loads(body)
                 except Exception:
@@ -139,9 +139,9 @@ class TelegramAPI:
             except Exception as e:
                 label = self._opener_labels[idx]
                 if attempt < n - 1:
-                    self.app.log(f"⚠️ {label} таймаут для {method}, пробую следующий...")
+                    self.app.log(f"[TIMEOUT] {label} timeout for {method}, trying next...")
                 else:
-                    self.app.log(f"⚠️ Telegram API request error for {method}: {e}")
+                    self.app.log(f"[ERROR] Telegram API request error for {method}: {e}")
         return None
 
     def _build_inline_markup(self, inline_keyboard):
@@ -172,11 +172,11 @@ class TelegramAPI:
             if markup:
                 payload["reply_markup"] = markup
 
-        self.app.log(f"📤 SENDING RICH MESSAGE to chat {self.chat_id}")
+        self.app.log(f"[SEND] RICH MESSAGE to chat {self.chat_id}")
         result = self._tg_api("sendRichMessage", payload)
         if result and result.get("ok"):
             msg_id = result["result"]["message_id"]
-            self.app.log(f"📤 Rich message sent, message_id={msg_id}")
+            self.app.log(f"[SEND] Rich message sent, message_id={msg_id}")
             return msg_id
         return None
 
@@ -195,7 +195,7 @@ class TelegramAPI:
             if markup:
                 payload["reply_markup"] = markup
 
-        self.app.log(f"✏️ EDITING RICH MESSAGE (message_id: {message_id})")
+        self.app.log(f"[EDIT] RICH MESSAGE (message_id: {message_id})")
         result = self._tg_api("editMessageText", payload)
         return result and result.get("ok")
 
@@ -209,12 +209,12 @@ class TelegramAPI:
         if self.chat_id:
             kwargs["chat_id"] = self.chat_id
             
-        self.app.log(f"📤 SENDING MESSAGE via HA")
+        self.app.log(f"[SEND] MESSAGE via HA")
         response = self.app.call_service("telegram_bot/send_message", **kwargs)
         try:
             if response and "result" in response:
                 msg_id = response["result"]["response"]["chats"][0]["message_id"]
-                self.app.log(f"📤 HA message sent, message_id={msg_id}")
+                self.app.log(f"[SEND] HA message sent, message_id={msg_id}")
                 return msg_id
         except Exception as e:
             self.app.log(f"ERROR getting message_id from HA response: {e}")
@@ -230,7 +230,7 @@ class TelegramAPI:
         }
         if self.chat_id:
             kwargs["chat_id"] = self.chat_id
-        self.app.log(f"✏️ EDITING MESSAGE via HA (message_id: {message_id})")
+        self.app.log(f"[EDIT] MESSAGE via HA (message_id: {message_id})")
         try:
             self.app.call_service("telegram_bot/edit_message", **kwargs)
         except Exception as e:
@@ -248,7 +248,7 @@ class TelegramAPI:
             if self.chat_id:
                 kwargs["chat_id"] = self.chat_id
             self.app.call_service("telegram_bot/pin_message", **kwargs)
-            self.app.log(f"📌 Pinned main message {self.main_message_id}")
+            self.app.log(f"[PIN] Pinned main message {self.main_message_id}")
         except Exception as e:
             self.app.log(f"Failed to pin main message {self.main_message_id}: {e}")
 
@@ -323,7 +323,7 @@ class TelegramAPI:
         if self.chat_id:
             kwargs["chat_id"] = self.chat_id
         try:
-            self.app.log("🔔 SENDING NOTIFICATION via HA")
+            self.app.log("[NOTIF] SENDING NOTIFICATION via HA")
             response = self.app.call_service("telegram_bot/send_message", **kwargs)
             if response and "result" in response:
                 return response["result"]["response"]["chats"][0]["message_id"]
@@ -378,7 +378,7 @@ class TelegramAPI:
                 quiet=True,
             )
             if result and result.get("ok"):
-                self.app.log(f"🗑 Deleted notification {message_id}")
+                self.app.log(f"[DEL] Deleted notification {message_id}")
                 return True
             if result is not None:
                 description = str(result.get("description", "")).lower()
@@ -388,9 +388,9 @@ class TelegramAPI:
                     "message can't be deleted",
                     "message identifier is not specified",
                 )):
-                    self.app.log(f"🗑 Notification {message_id} already gone: {description}")
+                    self.app.log(f"[DEL] Notification {message_id} already gone: {description}")
                     return True
-                self.app.log(f"❌ Failed to delete notification {message_id}: {description}")
+                self.app.log(f"[ERROR] Failed to delete notification {message_id}: {description}")
 
         try:
             kwargs = {"message_id": message_id}

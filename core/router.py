@@ -50,7 +50,7 @@ class Router:
 
     def telegram_command(self, event_name, data, kwargs):
         command = data.get("command")
-        self.app.log(f"📥 RECEIVED COMMAND: {command} (chat: {data.get('chat_id')})")
+        self.app.log(f"[CMD] RECEIVED COMMAND: {command} (chat: {data.get('chat_id')})")
         self.telegram.update_chat_id(data.get("chat_id"))
 
         if command == "/start":
@@ -59,7 +59,7 @@ class Router:
 
     def inline_callback(self, event_name, data, kwargs):
         command = data.get("command", "")
-        self.app.log(f"🔘 RECEIVED CALLBACK: {command} (chat: {data.get('chat_id')})")
+        self.app.log(f"[CALLBACK] RECEIVED CALLBACK: {command} (chat: {data.get('chat_id')})")
         self.telegram.update_chat_id(data.get("chat_id"))
 
         handler = self._exact.get(command)
@@ -72,7 +72,7 @@ class Router:
                 prefix_handler(command[len(prefix):])
                 return
 
-        self.app.log(f"⚠️ Unhandled callback: {command}")
+        self.app.log(f"[WARN] Unhandled callback: {command}")
 
     # ───────────── Навигация по меню ─────────────
 
@@ -103,10 +103,10 @@ class Router:
         entity, action = args
         if action == "on":
             target_mode = self.app.last_ac_modes.get(entity, "cool")
-            self.app.log(f"🟢 Turning ON climate {entity} with mode {target_mode}")
+            self.app.log(f"[CLIMATE] Turning ON climate {entity} with mode {target_mode}")
             self.app.call_service("climate/set_hvac_mode", entity_id=entity, hvac_mode=target_mode)
         else:
-            self.app.log(f"🛑 Turning OFF climate {entity}")
+            self.app.log(f"[CLIMATE] Turning OFF climate {entity}")
             self.app.call_service("climate/turn_off", entity_id=entity)
         self.menu_manager.refresh()
 
@@ -191,7 +191,7 @@ class Router:
         """Групповое выключение по короткому токену — список сущностей не влезает в callback_data."""
         entities = self.light_monitor.group_entities(token)
         if not entities:
-            self.app.log(f"⚠️ Unknown notification group token: {token}")
+            self.app.log(f"[WARN] Unknown notification group token: {token}")
             return
         self.light_monitor.turn_off_all(entities)
 
