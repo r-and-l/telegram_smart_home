@@ -86,5 +86,7 @@ TIMER_CONFIG = {
 TELEGRAM_CONFIG = {
     "chat_id": None,               # None — берётся из первого входящего сообщения
     "bot_token": "ТВОЙ_ТОКЕН_БОТА",  # Нужен для нативных таблиц и надёжного удаления уведомлений
- "proxy": None,  # SOCKS5 прокси (None — без прокси)
+    # Прокси (список или строка, None — без прокси). Прямое подключение добавляется как fallback.
+    # "socks5://host:port" или "socks5://user:pass@host:port"
+    "proxy": None,
 }

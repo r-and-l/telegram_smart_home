@@ -13,7 +13,8 @@ class TelegramAPI:
         self.bot_token = TELEGRAM_CONFIG.get("bot_token")
         self.last_text = None
         self.last_keyboard = None
-        self._opener = self._build_opener()
+        self._openers, self._opener_labels = self._build_openers()
+        self._opener_idx = 0  # текущий лучший прокси
 
         self.app.log(f"TelegramAPI initialized: bot_token={'SET' if self.bot_token else 'NOT SET'}, "
                      f"chat_id={self.chat_id}, main_message_id={self.main_message_id}")
@@ -39,57 +40,109 @@ class TelegramAPI:
 
     # ───────────── Прямые вызовы Telegram Bot API (Rich Tables) ─────────────
 
-    def _build_opener(self):
-        """Создаёт urllib opener, опционально через SOCKS5 прокси."""
-        proxy = TELEGRAM_CONFIG.get("proxy")
-        if proxy and proxy.startswith("socks5://"):
-            try:
-                import socks
-                from sockshandler import SocksiPyHandler
-            except ImportError:
-                self.app.log("📦 Устанавливаю PySocks для прокси...")
-                import subprocess
-                subprocess.check_call(["pip", "install", "-q", "PySocks"])
-                import socks
-                from sockshandler import SocksiPyHandler
+    def _build_openers(self):
+        """
+        Создаёт список urllib opener'ов из конфига.
+        Поддерживает: список прокси (или одну строку), с/без аутентификации.
+        Форматы прокси:
+          "socks5://host:port"
+          "socks5://user:pass@host:port"
+        Прямое подключение (без прокси) всегда добавляется последним как fallback.
+        """
+        openers = []
+        labels = []
 
+        proxy_cfg = TELEGRAM_CONFIG.get("proxy")
+        if proxy_cfg:
+            proxies = proxy_cfg if isinstance(proxy_cfg, list) else [proxy_cfg]
+        else:
+            proxies = []
+
+        socks_mod = None
+        handler_cls = None
+
+        for proxy in proxies:
+            if not proxy or not proxy.startswith("socks5://"):
+                continue
+
+            # Lazy import + auto-install PySocks
+            if socks_mod is None:
+                try:
+                    import socks as _s
+                    from sockshandler import SocksiPyHandler as _h
+                except ImportError:
+                    self.app.log("📦 Устанавливаю PySocks для прокси...")
+                    import subprocess
+                    subprocess.check_call(["pip", "install", "-q", "PySocks"])
+                    import socks as _s
+                    from sockshandler import SocksiPyHandler as _h
+                socks_mod, handler_cls = _s, _h
+
+            # Разбираем socks5://[user:pass@]host:port
             addr = proxy.replace("socks5://", "")
+            username = password = None
+            if "@" in addr:
+                creds, addr = addr.rsplit("@", 1)
+                if ":" in creds:
+                    username, password = creds.split(":", 1)
             host, port = addr.split(":")
+
             opener = urllib.request.build_opener(
-                SocksiPyHandler(socks.SOCKS5, host, int(port))
+                handler_cls(socks_mod.SOCKS5, host, int(port),
+                            username=username, password=password)
             )
-            self.app.log(f"🌐 Telegram API proxy: {proxy}")
-            return opener
-        return urllib.request.build_opener()
+            openers.append(opener)
+            label = f"socks5://{host}:{port}" + (" (auth)" if username else "")
+            labels.append(label)
+            self.app.log(f"🌐 Прокси #{len(openers)}: {label}")
+
+        # Прямое подключение — всегда последний fallback
+        openers.append(urllib.request.build_opener())
+        labels.append("direct")
+        self.app.log(f"🌐 Fallback: прямое подключение (всего {len(openers)} вариантов)")
+
+        return openers, labels
 
     def _tg_api(self, method, payload, timeout=5, quiet=False):
         """
         Выполняет HTTP-запрос к Telegram Bot API.
-        Возвращает разобранный ответ (в том числе для HTTP-ошибок, чтобы
-        вызывающий код мог отличить «сообщения уже нет» от сетевого сбоя),
-        либо None, если ответ получить не удалось.
+        При таймауте пробует следующий opener из списка.
         """
         if not self.bot_token:
             return None
         url = f"https://api.telegram.org/bot{self.bot_token}/{method}"
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-        try:
-            with self._opener.open(req, timeout=timeout) as resp:
-                result = json.loads(resp.read().decode("utf-8"))
-                self.app.log(f"✅ Telegram API {method} OK")
-                return result
-        except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", errors="replace")
-            if not quiet:
-                self.app.log(f"❌ Telegram API error {e.code} for {method}: {body}")
+
+        # Пробуем opener'ы начиная с текущего лучшего
+        n = len(self._openers)
+        for attempt in range(n):
+            idx = (self._opener_idx + attempt) % n
+            opener = self._openers[idx]
+            req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
             try:
-                return json.loads(body)
-            except Exception:
-                return {"ok": False, "error_code": e.code, "description": body}
-        except Exception as e:
-            self.app.log(f"⚠️ Telegram API request error for {method}: {e}")
-            return None
+                with opener.open(req, timeout=timeout) as resp:
+                    result = json.loads(resp.read().decode("utf-8"))
+                    # Запоминаем работающий opener
+                    if idx != self._opener_idx:
+                        self.app.log(f"🔄 Переключился на прокси: {self._opener_labels[idx]}")
+                        self._opener_idx = idx
+                    self.app.log(f"✅ Telegram API {method} OK")
+                    return result
+            except urllib.error.HTTPError as e:
+                body = e.read().decode("utf-8", errors="replace")
+                if not quiet:
+                    self.app.log(f"❌ Telegram API error {e.code} for {method}: {body}")
+                try:
+                    return json.loads(body)
+                except Exception:
+                    return {"ok": False, "error_code": e.code, "description": body}
+            except Exception as e:
+                label = self._opener_labels[idx]
+                if attempt < n - 1:
+                    self.app.log(f"⚠️ {label} таймаут для {method}, пробую следующий...")
+                else:
+                    self.app.log(f"⚠️ Telegram API request error for {method}: {e}")
+        return None
 
     def _build_inline_markup(self, inline_keyboard):
         """Преобразует список кнопок в формат InlineKeyboardMarkup."""
