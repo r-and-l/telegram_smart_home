@@ -350,6 +350,41 @@ class LightMonitorTestCase(unittest.TestCase):
         self.assertEqual(monitor.notifications, {})
         self.assertEqual(monitor.groups, {})
 
+    def test_many_lights_always_merge_into_single_notification(self):
+        """Даже если срабатывают все светильники с разницей в полчаса — в чате всегда ровно одно сообщение."""
+        monitor = self.make_monitor()
+        for entity in self.lights:
+            self.turn_on(monitor, entity)
+            self.app.now += timedelta(minutes=30)
+            self.fire_all_timers()
+            self.assertEqual(len(monitor.notifications), 1)
+            self.assertEqual(len(self.telegram.sent), 1)
+
+        only_msg_id = next(iter(monitor.notifications))
+        self.assertEqual(monitor.notifications[only_msg_id], self.lights)
+
+        # Выключаем руками все по очереди — сообщение должно исчезнуть
+        for entity in self.lights:
+            self.turn_off(monitor, entity)
+        self.assertEqual(monitor.notifications, {})
+        self.assertEqual(self.telegram.sent, {})
+
+    def test_overdue_lights_coalesce_without_cascade(self):
+        """Если при старте/сверке уже несколько комнат перегорели лимит — шлётся сразу одно общее сообщение без каскада."""
+        monitor = self.make_monitor()
+        for entity in self.lights[:4]:
+            self.app.set_state_value(entity, "on")
+            self.app.set_last_changed(entity, 500)
+        self.app.timers.clear()
+        monitor.reconcile()
+
+        self.fire_all_timers()
+        self.assertEqual(len(monitor.notifications), 1)
+        self.assertEqual(len(self.telegram.sent), 1)
+        self.assertEqual(self.telegram.deleted, [])
+        only_msg_id = next(iter(monitor.notifications))
+        self.assertEqual(monitor.notifications[only_msg_id], self.lights[:4])
+
     # ───────────── Таймеры из Telegram ─────────────
 
     def test_set_timer_persists_and_applies(self):

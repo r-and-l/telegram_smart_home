@@ -17,6 +17,7 @@ class Router:
         self.light_monitor = light_monitor
         self.automations = automations
         self.telegram = telegram_api
+        self._current_callback_message_id = None
 
         self._exact = {
             "/back": lambda: self.menu_manager.show_main_menu(),
@@ -62,17 +63,26 @@ class Router:
         self.app.log(f"[CALLBACK] RECEIVED CALLBACK: {command} (chat: {data.get('chat_id')})")
         self.telegram.update_chat_id(data.get("chat_id"))
 
-        handler = self._exact.get(command)
-        if handler:
-            handler()
-            return
+        msg_data = data.get("message") if isinstance(data.get("message"), dict) else {}
+        self._current_callback_message_id = data.get("message_id") or msg_data.get("message_id")
+        callback_id = data.get("id")
 
-        for prefix, prefix_handler in self._prefix:
-            if command.startswith(prefix):
-                prefix_handler(command[len(prefix):])
+        try:
+            handler = self._exact.get(command)
+            if handler:
+                handler()
                 return
 
-        self.app.log(f"[WARN] Unhandled callback: {command}")
+            for prefix, prefix_handler in self._prefix:
+                if command.startswith(prefix):
+                    prefix_handler(command[len(prefix):])
+                    return
+
+            self.app.log(f"[WARN] Unhandled callback: {command}")
+        finally:
+            self._current_callback_message_id = None
+            if callback_id and hasattr(self.telegram, "answer_callback_query"):
+                self.telegram.answer_callback_query(callback_id)
 
     # ───────────── Навигация по меню ─────────────
 
@@ -180,20 +190,22 @@ class Router:
         self.menu_manager.refresh()
 
     def _turn_off(self, entity):
-        self.light_monitor.turn_off(entity)
+        self.light_monitor.turn_off(entity, callback_message_id=self._current_callback_message_id)
 
     def _turn_off_all(self, payload):
         """Совместимость со старыми кнопками, где список сущностей был в callback_data."""
         entities = [e for e in payload.split(",") if e]
-        self.light_monitor.turn_off_all(entities)
+        self.light_monitor.turn_off_all(entities, callback_message_id=self._current_callback_message_id)
 
     def _turn_off_group(self, token):
         """Групповое выключение по короткому токену — список сущностей не влезает в callback_data."""
         entities = self.light_monitor.group_entities(token)
         if not entities:
             self.app.log(f"[WARN] Unknown notification group token: {token}")
+            if self._current_callback_message_id:
+                self.light_monitor._delete_untracked_callback_message(self._current_callback_message_id)
             return
-        self.light_monitor.turn_off_all(entities)
+        self.light_monitor.turn_off_all(entities, callback_message_id=self._current_callback_message_id)
 
     # ───────────── Таймеры уведомлений ─────────────
 

@@ -1,23 +1,133 @@
+import http.client
+import io
 import json
-import urllib.request
-import urllib.error
-import time
 import socket
+import ssl
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from config import TELEGRAM_CONFIG
 from core.store import Store
 from core.route_optimizer import Route, RouteOptimizer
 
 # Принудительно используем IPv4 для Telegram, т.к. на многих роутерах (включая OpenWrt с туннелями)
 # IPv6 локально включён, но туннели к Telegram не имеют связности по IPv6, из-за чего рукопожатие зависает.
-_orig_getaddrinfo = socket.getaddrinfo
+# Оригинальный getaddrinfo сохраняем прямо в модуле socket, чтобы importlib.reload(core.telegram_api)
+# в app.py никогда не оборачивал обёртку саму в себя (иначе возникает RecursionError).
+if not hasattr(socket, "_orig_getaddrinfo"):
+    socket._orig_getaddrinfo = socket.getaddrinfo
+
 
 def _telegram_ipv4_getaddrinfo(host, port, family=0, *args, **kwargs):
     if host and "telegram.org" in str(host):
         family = socket.AF_INET
-    return _orig_getaddrinfo(host, port, family, *args, **kwargs)
+    return socket._orig_getaddrinfo(host, port, family, *args, **kwargs)
 
-if socket.getaddrinfo != _telegram_ipv4_getaddrinfo:
-    socket.getaddrinfo = _telegram_ipv4_getaddrinfo
+
+socket.getaddrinfo = _telegram_ipv4_getaddrinfo
+
+
+class _KeepAliveResponse:
+    """Ответ с контекстным менеджером, совместимый с urllib.request.urlopen."""
+
+    def __init__(self, body, status, headers, url):
+        self._body = body
+        self.status = status
+        self.code = status
+        self.headers = headers
+        self.url = url
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return False
+
+
+class KeepAliveOpener:
+    """
+    Обёртка с интерфейсом urllib OpenerDirector (.open(req, timeout=...)),
+    переиспользующая постоянное TLS-соединение (HTTP/1.1 Keep-Alive) к api.telegram.org.
+    Убирает лишние TLS-рукопожатия на каждый клик (снижая пинг с ~400мс до ~55мс)
+    и прозрачно переподключается при закрытии неактивного сокета сервером.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._conn = None
+        self._host = None
+        self._ssl_ctx = ssl.create_default_context()
+
+    def _close_conn(self):
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            self._conn = None
+
+    def open(self, fullurl, data=None, timeout=5):
+        if isinstance(fullurl, urllib.request.Request):
+            url = fullurl.full_url
+            req_data = fullurl.data if data is None else data
+            headers = dict(fullurl.header_items())
+            method = fullurl.get_method()
+        else:
+            url = str(fullurl)
+            req_data = data
+            headers = {}
+            method = "POST" if req_data is not None else "GET"
+
+        parsed = urllib.parse.urlsplit(url)
+        host = parsed.hostname or "api.telegram.org"
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+
+        headers["Connection"] = "keep-alive"
+        if req_data is not None:
+            headers["Content-Length"] = str(len(req_data))
+
+        with self._lock:
+            last_exc = None
+            for attempt in range(2):
+                try:
+                    if self._conn is None or self._host != (host, port):
+                        self._close_conn()
+                        self._conn = http.client.HTTPSConnection(
+                            host, port, timeout=timeout, context=self._ssl_ctx
+                        )
+                        self._host = (host, port)
+                    else:
+                        self._conn.timeout = timeout
+                        if self._conn.sock is not None:
+                            self._conn.sock.settimeout(timeout)
+
+                    self._conn.request(method, path, body=req_data, headers=headers)
+                    resp = self._conn.getresponse()
+                    body = resp.read()
+                    status = resp.status
+                    reason = resp.reason
+
+                    if status >= 400:
+                        raise urllib.error.HTTPError(
+                            url, status, reason, resp.headers, io.BytesIO(body)
+                        )
+                    return _KeepAliveResponse(body, status, resp.headers, url)
+                except urllib.error.HTTPError:
+                    raise
+                except Exception as e:
+                    last_exc = e
+                    self._close_conn()
+                    if attempt == 0:
+                        continue
+            raise urllib.error.URLError(last_exc)
 
 class TelegramAPI:
     def __init__(self, app, store=None):
@@ -131,8 +241,8 @@ class TelegramAPI:
                 routes.append(route)
                 self.app.log(f"[PROXY] #{len(routes)}: {label}")
 
-        # Прямое подключение — всегда доступный маршрут
-        direct_route = Route(index=len(routes), opener=urllib.request.build_opener(), label="direct")
+        # Прямое подключение с переиспользованием TLS-сессии (HTTP Keep-Alive)
+        direct_route = Route(index=len(routes), opener=KeepAliveOpener(), label="direct")
         routes.append(direct_route)
         self.app.log(f"[PROXY] Direct connection added ({len(routes)} total routes)")
 
@@ -142,7 +252,7 @@ class TelegramAPI:
         """Фоновый замер пинга всех маршрутов через легкий getMe запрос."""
         return self.route_optimizer.benchmark(self.bot_token, timeout=3.5)
 
-    def _tg_api(self, method, payload, timeout=8, quiet=False):
+    def _tg_api(self, method, payload, timeout=5, quiet=False):
         """
         Выполняет HTTP-запрос к Telegram Bot API.
         Всегда использует самый быстрый доступный маршрут, замеряя время ответа.
@@ -227,7 +337,11 @@ class TelegramAPI:
         return None
 
     def _edit_rich_message(self, message_id, blocks=None, inline_keyboard=None, rich_html=None):
-        """Редактирует Rich Message — через HTML или blocks."""
+        """
+        Редактирует Rich Message — через HTML или blocks.
+        Возвращает True при успехе (включая 'message is not modified'),
+        'missing' если сообщение было удалено из чата, и False при ошибке.
+        """
         payload = {
             "chat_id": self.chat_id,
             "message_id": message_id,
@@ -243,7 +357,15 @@ class TelegramAPI:
 
         self.app.log(f"[EDIT] RICH MESSAGE (message_id: {message_id})")
         result = self._tg_api("editMessageText", payload)
-        return result and result.get("ok")
+        if result and result.get("ok"):
+            return True
+        if result is not None:
+            desc = str(result.get("description", "")).lower()
+            if "message is not modified" in desc:
+                return True
+            if "message to edit not found" in desc or "message_id_invalid" in desc:
+                return "missing"
+        return False
 
     # ───────────── Вызовы HA telegram_bot интеграции (Fallback) ─────────────
 
@@ -305,8 +427,8 @@ class TelegramAPI:
         """
         Рендерит основное сообщение бота.
 
-        Один вызов к Telegram API (rich_html ИЛИ rich_blocks), при неудаче —
-        fallback через HA. Никогда не делает каскад вызовов к тому же серверу.
+        Один вызов к Telegram API (rich_html ИЛИ rich_blocks), при отсутствии
+        bot_token — fallback через HA. Никогда не делает каскад вызовов.
         """
         compare_key = rich_html or (json.dumps(rich_blocks, ensure_ascii=False, sort_keys=True) if rich_blocks else text)
 
@@ -314,12 +436,34 @@ class TelegramAPI:
             if self.last_text == compare_key and self.last_keyboard == inline_keyboard:
                 return
 
-        self.last_text = compare_key
-        self.last_keyboard = inline_keyboard
-
         can_use_api = bool(self.bot_token and self.chat_id)
 
-        # ─── 1. Если ещё нет сообщения — отправляем новое и закрепляем ───
+        # ─── 2. Если сообщение существует — редактируем ───
+        if self.main_message_id is not None:
+            status = False
+
+            if can_use_api:
+                if rich_html:
+                    status = self._edit_rich_message(self.main_message_id, rich_html=rich_html)
+                elif rich_blocks:
+                    status = self._edit_rich_message(
+                        self.main_message_id, blocks=rich_blocks, inline_keyboard=inline_keyboard
+                    )
+                if status == "missing":
+                    self.app.log(f"[WARN] Main message {self.main_message_id} not found in chat, recreating")
+                    self.reset_message_id()
+                else:
+                    if status:
+                        self.last_text = compare_key
+                        self.last_keyboard = inline_keyboard
+                    return
+            elif text:
+                self._ha_edit_message(self.main_message_id, text, inline_keyboard, parse_mode)
+                self.last_text = compare_key
+                self.last_keyboard = inline_keyboard
+                return
+
+        # ─── 1. Если ещё нет сообщения (или оно было удалено) — отправляем новое и закрепляем ───
         if self.main_message_id is None:
             msg_id = None
 
@@ -328,32 +472,24 @@ class TelegramAPI:
                     msg_id = self._send_rich_message(rich_html=rich_html)
                 elif rich_blocks:
                     msg_id = self._send_rich_message(blocks=rich_blocks, inline_keyboard=inline_keyboard)
-
-            if not msg_id and text:
+            elif text:
                 msg_id = self._ha_send_message(text, inline_keyboard, parse_mode)
 
             if msg_id:
                 self.main_message_id = msg_id
+                self.last_text = compare_key
+                self.last_keyboard = inline_keyboard
                 self._save_state()
                 self.pin_main_message()
 
-        # ─── 2. Если сообщение существует — редактируем ───
-        else:
-            success = False
-
-            if can_use_api:
-                if rich_html:
-                    success = self._edit_rich_message(self.main_message_id, rich_html=rich_html)
-                elif rich_blocks:
-                    success = self._edit_rich_message(
-                        self.main_message_id, blocks=rich_blocks, inline_keyboard=inline_keyboard
-                    )
-
-            if not success and text:
-                self._ha_edit_message(self.main_message_id, text, inline_keyboard, parse_mode)
-
     def send_notification(self, text, inline_keyboard=None, parse_mode="html"):
-        """Отправляет всплывающее уведомление. Возвращает message_id или None."""
+        """
+        Отправляет всплывающее уведомление. Возвращает message_id или None.
+
+        Когда заданы bot_token и chat_id, отправка идёт только напрямую через Bot API:
+        fallback на HA telegram_bot/send_message не возвращает message_id в AppDaemon,
+        что порождает неотслеживаемые сообщения в чате и каскад повторов при reconcile().
+        """
         if self.bot_token and self.chat_id:
             payload = {"chat_id": self.chat_id, "text": text, "parse_mode": "HTML"}
             markup = self._build_inline_markup(inline_keyboard)
@@ -362,6 +498,7 @@ class TelegramAPI:
             result = self._tg_api("sendMessage", payload)
             if result and result.get("ok"):
                 return result["result"]["message_id"]
+            return None
 
         kwargs = {"message": text, "parse_mode": parse_mode}
         if inline_keyboard is not None:
@@ -392,8 +529,9 @@ class TelegramAPI:
             if result and result.get("ok"):
                 return True
             # «Сообщение не изменилось» — не ошибка
-            if result and "message is not modified" in str(result.get("description", "")):
+            if result and "message is not modified" in str(result.get("description", "")).lower():
                 return True
+            return False
 
         kwargs = {
             "message_id": message_id,
@@ -428,15 +566,21 @@ class TelegramAPI:
                 return True
             if result is not None:
                 description = str(result.get("description", "")).lower()
-                # Сообщения уже нет / оно слишком старое — повторять бессмысленно
+                # Сообщения уже нет — повторять бессмысленно
                 if any(marker in description for marker in (
                     "message to delete not found",
-                    "message can't be deleted",
                     "message identifier is not specified",
+                    "message_id_invalid",
                 )):
                     self.app.log(f"[DEL] Notification {message_id} already gone: {description}")
                     return True
+                # Сообщение старше 48 часов: Telegram не даёт удалить, но позволяет отредактировать
+                if "message can't be deleted" in description:
+                    self.app.log(f"[DEL] Notification {message_id} too old to delete, clearing buttons")
+                    self.edit_notification(message_id, "✅ Свет выключен", inline_keyboard=[])
+                    return True
                 self.app.log(f"[ERROR] Failed to delete notification {message_id}: {description}")
+            return False
 
         try:
             kwargs = {"message_id": message_id}
@@ -447,3 +591,13 @@ class TelegramAPI:
         except Exception as e:
             self.app.log(f"Failed to delete notification {message_id}: {e}")
             return False
+
+    def answer_callback_query(self, callback_query_id, text=None):
+        """Подтверждает нажатие inline-кнопки, снимая индикатор ожидания в клиенте Telegram."""
+        if not callback_query_id or not self.bot_token:
+            return False
+        payload = {"callback_query_id": callback_query_id}
+        if text:
+            payload["text"] = text
+        result = self._tg_api("answerCallbackQuery", payload, timeout=3, quiet=True)
+        return bool(result and result.get("ok"))

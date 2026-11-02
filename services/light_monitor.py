@@ -173,7 +173,7 @@ class LightMonitor:
         """Обработчик изменения состояния света"""
         if new == "on":
             self._start_light_timer(entity)
-        elif new == "off":
+        else:
             self._cancel_light_timer(entity)
             self._detach_entity(entity)
 
@@ -210,6 +210,15 @@ class LightMonitor:
         elapsed = (datetime.now(changed_at.tzinfo) - changed_at).total_seconds()
         return max(0, elapsed)
 
+    def _is_overdue(self, entity):
+        """Превысил ли горящий свет установленный для него лимит времени."""
+        if self.app.get_state(entity) != "on":
+            return False
+        minutes = self.timer_minutes(entity)
+        if not minutes:
+            return False
+        return self._seconds_since_on(entity) + 5 >= minutes * 60
+
     def _cancel_light_timer(self, entity):
         """Отменяет таймер для света"""
         handle = self.active_timers.pop(entity, None)
@@ -235,17 +244,41 @@ class LightMonitor:
         self.pending_group_notifications[entity] = now
 
         window_seconds = LIGHT_MONITOR_CONFIG["group_notification_window"] * 60
-        # В окно группировки попадают только те, что до сих пор горят
-        recent = [
-            e for e, ts in list(self.pending_group_notifications.items())
-            if (now - ts).total_seconds() <= window_seconds and self.app.get_state(e) == "on"
-        ]
 
-        if len(recent) > 1:
-            self._send_group_notification(recent)
+        # Собираем все горящие светильники в единое уведомление:
+        # 1) уже находящиеся в активных уведомлениях (чтобы новые всегда объединялись с ними)
+        # 2) попавшие в окно группировки pending_group_notifications
+        # 3) текущая сработавшая сущность
+        # 4) другие сущности с активным таймером, которые тоже уже превысили лимит (коалесценция)
+        combined = []
+
+        for msg_entities in self.notifications.values():
+            for e in msg_entities:
+                if e not in combined and self.app.get_state(e) == "on":
+                    combined.append(e)
+
+        for e, ts in list(self.pending_group_notifications.items()):
+            if (now - ts).total_seconds() <= window_seconds and self.app.get_state(e) == "on":
+                if e not in combined:
+                    combined.append(e)
+
+        if entity not in combined:
+            combined.append(entity)
+
+        for other in list(self.active_timers.keys()):
+            if other not in combined and self._is_overdue(other):
+                self.pending_group_notifications[other] = now
+                combined.append(other)
+
+        # Если ровно этот набор уже отображён в единственном активном уведомлении — пропускаем
+        active_msgs = [mid for mid, ents in self.notifications.items() if ents]
+        if len(active_msgs) == 1 and self.notifications[active_msgs[0]] == combined:
+            self.app.log(f"[SKIP] Notification for {combined} already active (msg {active_msgs[0]}), skipping")
+            return
+
+        if len(combined) > 1:
+            self._send_group_notification(combined)
         else:
-            # Запись в pending остаётся до выключения света: если в окне
-            # группировки сработает ещё один таймер, уведомления объединятся.
             self._send_individual_notification(entity)
 
     def _notification_content(self, entities):
@@ -284,9 +317,9 @@ class LightMonitor:
 
     def _send_group_notification(self, entities):
         """Отправляет групповое уведомление, убирая ранее отправленные по этим сущностям"""
-        # Убираем уже висящие уведомления по этим сущностям, чтобы не было дублей
-        for entity in entities:
-            self._detach_entity(entity, refresh=False)
+        # Убираем уже висящие уведомления по этим сущностям, чтобы в чате было только одно сообщение
+        for entity in list(entities):
+            self._detach_entity(entity, refresh=False, keep_pending=True)
 
         text, keyboard = self._notification_content(entities)
         message_id = self.telegram.send_notification(text=text, inline_keyboard=keyboard)
@@ -296,43 +329,56 @@ class LightMonitor:
             self.app.log(f"Sent group notification for {entities}")
         else:
             self.app.log(f"[WARN] Failed to send group notification for {entities}, will retry on next reconcile")
-        for entity in entities:
-            self.pending_group_notifications.pop(entity, None)
 
     # ───────────── Снятие уведомлений ─────────────
 
-    def _detach_entity(self, entity, refresh=True):
+    def _detach_entity(self, entity, refresh=True, keep_pending=False):
         """
-        Убирает сущность из её уведомления.
+        Убирает сущность из всех её уведомлений.
         Если в уведомлении больше никого не осталось — удаляет сообщение,
         иначе (refresh=True) переписывает текст под оставшийся свет.
         """
-        self.pending_group_notifications.pop(entity, None)
+        if not keep_pending:
+            self.pending_group_notifications.pop(entity, None)
 
-        message_id = self._notification_of(entity)
-        if message_id is None:
+        # Заодно доудаляем осиротевшие записи, где прошлое удаление не прошло из-за сети
+        for mid in list(self.notifications.keys()):
+            if not self.notifications[mid]:
+                if self.telegram.delete_notification(int(mid)):
+                    self.notifications.pop(mid, None)
+                    self._save_notifications()
+
+        matching_ids = [
+            mid for mid, entities in list(self.notifications.items())
+            if entity in entities
+        ]
+        if not matching_ids:
             return
 
-        remaining = [e for e in self.notifications[message_id] if e != entity]
+        for message_id in matching_ids:
+            remaining = [
+                e for e in self.notifications.get(message_id, [])
+                if e != entity and self.app.get_state(e) == "on"
+            ]
 
-        if not remaining:
-            if self.telegram.delete_notification(int(message_id)):
-                del self.notifications[message_id]
-                self._save_notifications()
-                self.app.log(f"Removed notification for {entity}")
-            else:
-                # Не удалось удалить — оставляем запись, следующая сверка повторит попытку
-                self.notifications[message_id] = []
-                self._save_notifications()
-            return
+            if not remaining:
+                if self.telegram.delete_notification(int(message_id)):
+                    self.notifications.pop(message_id, None)
+                    self._save_notifications()
+                    self.app.log(f"Removed notification for {entity}")
+                else:
+                    # Не удалось удалить — оставляем запись с пустым списком, следующая сверка повторит попытку
+                    self.notifications[message_id] = []
+                    self._save_notifications()
+                continue
 
-        self.notifications[message_id] = remaining
-        # Клавиатура строится до сохранения: она регистрирует новый токен группы
-        text, keyboard = self._notification_content(remaining)
-        self._save_notifications()
+            self.notifications[message_id] = remaining
+            # Клавиатура строится до сохранения: она регистрирует новый токен группы
+            text, keyboard = self._notification_content(remaining)
+            self._save_notifications()
 
-        if refresh:
-            self.telegram.edit_notification(int(message_id), text, inline_keyboard=keyboard)
+            if refresh:
+                self.telegram.edit_notification(int(message_id), text, inline_keyboard=keyboard)
 
     def reconcile(self, kwargs=None):
         """
@@ -347,19 +393,29 @@ class LightMonitor:
             entities = self.notifications[message_id]
             still_on = [e for e in entities if self.app.get_state(e) == "on"]
 
-            if still_on == entities and entities:
-                continue
-
             if not still_on:
                 if self.telegram.delete_notification(int(message_id)):
                     self.notifications.pop(message_id, None)
                     self.app.log(f"Reconcile: removed stale notification {message_id}")
+                else:
+                    self.notifications[message_id] = []
                 continue
 
-            self.notifications[message_id] = still_on
-            text, keyboard = self._notification_content(still_on)
-            self.telegram.edit_notification(int(message_id), text, inline_keyboard=keyboard)
-            self.app.log(f"Reconcile: notification {message_id} narrowed to {still_on}")
+            if still_on != entities:
+                self.notifications[message_id] = still_on
+                text, keyboard = self._notification_content(still_on)
+                self.telegram.edit_notification(int(message_id), text, inline_keyboard=keyboard)
+                self.app.log(f"Reconcile: notification {message_id} narrowed to {still_on}")
+
+        # 1b. Если одновременно висит несколько живых уведомлений — объединяем их в одно
+        active_msg_ids = [mid for mid, ents in self.notifications.items() if ents]
+        if len(active_msg_ids) > 1:
+            merged = []
+            for mid in active_msg_ids:
+                for e in self.notifications[mid]:
+                    if e not in merged:
+                        merged.append(e)
+            self._send_group_notification(merged)
 
         self._save_notifications()
 
@@ -383,13 +439,25 @@ class LightMonitor:
 
     # ───────────── Действия по кнопкам уведомлений ─────────────
 
-    def turn_off(self, entity):
+    def _delete_untracked_callback_message(self, callback_message_id):
+        """Удаляет осиротевшее сообщение уведомления, если по его кнопке нажали в чате."""
+        if not callback_message_id:
+            return
+        if str(callback_message_id) in self.notifications:
+            return
+        if callback_message_id == getattr(self.telegram, "main_message_id", None):
+            return
+        self.telegram.delete_notification(int(callback_message_id))
+
+    def turn_off(self, entity, callback_message_id=None):
         self.app.call_service("homeassistant/turn_off", entity_id=entity)
         self._cancel_light_timer(entity)
         self._detach_entity(entity)
+        self._delete_untracked_callback_message(callback_message_id)
 
-    def turn_off_all(self, entities):
-        for entity in entities:
+    def turn_off_all(self, entities, callback_message_id=None):
+        for idx, entity in enumerate(entities):
             self.app.call_service("homeassistant/turn_off", entity_id=entity)
             self._cancel_light_timer(entity)
-            self._detach_entity(entity, refresh=False)
+            self._detach_entity(entity, refresh=(idx == len(entities) - 1))
+        self._delete_untracked_callback_message(callback_message_id)

@@ -137,6 +137,40 @@ class RouteOptimizerTestCase(unittest.TestCase):
             self.assertIn("direct", labels)
             self.assertTrue(any("remote-dns" in l for l in labels))
 
+    def test_reload_telegram_api_does_not_recurse_getaddrinfo(self):
+        import importlib
+        import socket
+        import core.telegram_api
+
+        for _ in range(5):
+            importlib.reload(core.telegram_api)
+
+        with patch.object(socket, "_orig_getaddrinfo", return_value=[("ipv4",)]) as mock_orig:
+            res = socket.getaddrinfo("api.telegram.org", 443)
+            self.assertEqual(res, [("ipv4",)])
+            mock_orig.assert_called_once_with("api.telegram.org", 443, socket.AF_INET)
+
+    def test_failed_api_calls_do_not_corrupt_notification_tracking(self):
+        app_mock = MagicMock()
+        store_mock = MagicMock()
+        store_mock.get.return_value = None
+
+        with patch("core.telegram_api.TELEGRAM_CONFIG", {
+            "bot_token": "fake_token",
+            "chat_id": 12345,
+            "proxy": None,
+        }):
+            api = TelegramAPI(app_mock, store=store_mock)
+            api._tg_api = MagicMock(return_value=None)
+
+            # При сетевом сбое send_notification не должен слать через HA без message_id
+            self.assertIsNone(api.send_notification("test"))
+            app_mock.call_service.assert_not_called()
+
+            # При сетевом сбое delete_notification обязан вернуть False, чтобы reconcile повторил попытку
+            self.assertFalse(api.delete_notification(999))
+            app_mock.call_service.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

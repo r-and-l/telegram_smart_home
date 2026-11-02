@@ -241,9 +241,13 @@ class MenuManager:
         if light_monitor is not None:
             self.menus["timers"] = TimersMenu(app, light_monitor)
 
-        # Слушатели изменений состояний и атрибутов для всех сущностей из конфига
+        # Слушатели изменений состояний (атрибуты нужны только для климата и погоды,
+        # чтобы телеметрия Zigbee linkquality/last_seen не дёргала поток на выключателях)
         for entity in devices.all_monitored_entities():
-            self.app.listen_state(self._entity_state_changed, entity, attribute="all")
+            if entity.startswith(("climate.", "weather.")):
+                self.app.listen_state(self._entity_state_changed, entity, attribute="all")
+            else:
+                self.app.listen_state(self._entity_state_changed, entity)
         self.app.listen_state(self._entity_state_changed, BREATHER_ENTITY, attribute="all")
 
     # ───────────── Реакция на изменения состояний ─────────────

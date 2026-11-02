@@ -54,9 +54,9 @@ class TelegramSmartHome(hass.Hass):
             LIGHT_MONITOR_CONFIG.get("reconcile_interval", 60)
         )
 
-        # Периодический бенчмарк маршрутов (каждые 5 минут):
-        # замеряет пинг через каждый прокси и выбирает быстрейший
-        if self.telegram_api.bot_token:
+        # Периодический бенчмарк маршрутов (каждые 5 минут), если заданы прокси:
+        # замеряет пинг через каждый маршрут и выбирает быстрейший
+        if self.telegram_api.bot_token and len(self.telegram_api.route_optimizer.routes) > 1:
             self.run_every(self.telegram_api.benchmark_routes, "now + 5", 300)
 
         self.log("SMART HOME BOT STARTED")
