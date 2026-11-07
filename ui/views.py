@@ -607,6 +607,10 @@ def build_flights_keyboard(summary, sub_menu=None):
     return [
         [(search_label, "/flights:search")],
         [
+            ("🔄 Туда-обратно", "/flights:one_way:0"),
+            ("➡️ В одну сторону", "/flights:one_way:1"),
+        ],
+        [
             (f"🛫 Откуда ({origins_str}) ▸", "/menu:flights_origins"),
             (f"🛬 Куда ({dests_str}) ▸", "/menu:flights_dest"),
         ],

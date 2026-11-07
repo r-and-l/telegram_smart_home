@@ -81,6 +81,7 @@ class FlightMonitor:
             self.stay_min_days,
             int(saved.get("stay_max_days") or FLIGHT_CONFIG.get("stay_max_days", 33)),
         )
+        self.one_way = bool(saved.get("one_way", FLIGHT_CONFIG.get("one_way", False)))
 
         self.enabled = bool(saved.get("enabled", FLIGHT_CONFIG.get("enabled", True)))
         self.check_time = self._normalize_time(
@@ -146,6 +147,7 @@ class FlightMonitor:
             "depart_to": self.depart_to,
             "stay_min_days": self.stay_min_days,
             "stay_max_days": self.stay_max_days,
+            "one_way": self.one_way,
             "enabled": self.enabled,
             "check_time": self.check_time,
             "max_price": self.max_price,
@@ -268,6 +270,7 @@ class FlightMonitor:
             "depart_to": self.depart_to,
             "stay_min_days": self.stay_min_days,
             "stay_max_days": self.stay_max_days,
+            "one_way": self.one_way,
             "max_transfers": self.max_transfers,
             "max_duration_hours": self.max_duration_hours,
             "has_token": bool(self.get_token()),
@@ -393,6 +396,14 @@ class FlightMonitor:
         self._save_state()
         self.app.log(f"[FLIGHTS] Max duration set to {self.max_duration_hours}h")
 
+    def set_one_way(self, is_one_way):
+        self.one_way = bool(is_one_way)
+        self._save_state()
+        self.app.log(f"[FLIGHTS] Trip mode set to {'one-way' if self.one_way else 'round-trip'}")
+
+    def toggle_one_way(self):
+        self.set_one_way(not self.one_way)
+
     # ───────────── Настройка расписания и бюджета ─────────────
 
     def toggle_enabled(self):
@@ -435,6 +446,7 @@ class FlightMonitor:
         self.depart_to = self._normalize_date(FLIGHT_CONFIG.get("depart_to", "2027-02-05"))
         self.stay_min_days = int(FLIGHT_CONFIG.get("stay_min_days", 27))
         self.stay_max_days = int(FLIGHT_CONFIG.get("stay_max_days", 33))
+        self.one_way = bool(FLIGHT_CONFIG.get("one_way", False))
         self.enabled = bool(FLIGHT_CONFIG.get("enabled", True))
         self.check_time = self._normalize_time(FLIGHT_CONFIG.get("check_time", "10:00"))
         self.max_price = int(FLIGHT_CONFIG.get("max_price", 60000))
@@ -537,6 +549,7 @@ class FlightMonitor:
                 max_transfers=self.max_transfers,
                 max_duration_hours=float(self.max_duration_hours),
                 currency=FLIGHT_CONFIG.get("currency", "rub"),
+                one_way=self.one_way,
                 delay=0.15,
             )
 
@@ -611,10 +624,12 @@ class FlightMonitor:
         s = summary or self.status_summary()
         origins_str = ", ".join(s["origins"])
         dests_str = ", ".join(s["destinations"])
+        is_one_way = bool(s.get("one_way", False))
+        trip_info = "только туда" if is_one_way else f"{s['stay_min_days']}–{s['stay_max_days']} дн."
         header = (
             f"✈️ <b>Авиабилеты: {escape(origins_str)} → {escape(dests_str)}</b>\n"
             f"📅 Вылет: {escape(s['depart_from'])} — {escape(s['depart_to'])} "
-            f"({s['stay_min_days']}–{s['stay_max_days']} дн.) | "
+            f"({trip_info}) | "
             f"💰 до {s['max_price']:,} ₽".replace(",", " ")
         )
 
@@ -636,11 +651,13 @@ class FlightMonitor:
             r_dest = r.get("destination", self.destination)
             route = f"{r['origin']}→{r_dest}"
             dep_short = str(r.get("depart", ""))[:10]
-            ret_short = str(r.get("return", ""))[:10]
-            transfers = f"{r['transfers_to']}/{r['transfers_back']}"
+            r_ow = bool(r.get("one_way")) or not r.get("return")
+            ret_short = "—" if r_ow else str(r.get("return", ""))[:10]
+            stay_cell = "—" if r_ow else f"{r['stay_days']}"
+            transfers = f"{r['transfers_to']}" if r_ow else f"{r['transfers_to']}/{r['transfers_back']}"
             table_lines.append(
                 f"{idx:<2} {price_fmt:>7} | {route:<7} | {dep_short:<10} | {ret_short:<10} | "
-                f"{r['stay_days']:>2} | {transfers:<3}"
+                f"{stay_cell:>2} | {transfers:<3}"
             )
 
             links = []

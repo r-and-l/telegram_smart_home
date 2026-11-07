@@ -243,15 +243,21 @@ def build_trip_link(
     origin: str,
     destination: str,
     depart_dt_str: str,
-    return_dt_str: str,
+    return_dt_str: str = "",
     currency: str = CURRENCY,
 ) -> str:
-    """Формирует прямую ссылку на поиск этого же перелёта на ru.trip.com."""
+    """Формирует прямую ссылку на поиск этого же перелёта на ru.trip.com (туда-обратно или в одну сторону)."""
     dcity = str(origin).lower().strip()
     acity = str(destination).lower().strip()
     ddate = str(depart_dt_str)[:10]
-    rdate = str(return_dt_str)[:10]
+    rdate = str(return_dt_str or "")[:10]
     curr = str(currency).upper().strip() or "RUB"
+    if not rdate:
+        return (
+            f"https://ru.trip.com/flights/showfarefirst?"
+            f"dcity={dcity}&acity={acity}&ddate={ddate}"
+            f"&triptype=ow&class=y&quantity=1&curr={curr}&locale=ru-RU"
+        )
     return (
         f"https://ru.trip.com/flights/showfarefirst?"
         f"dcity={dcity}&acity={acity}&ddate={ddate}&rdate={rdate}"
@@ -274,25 +280,27 @@ def _http_get_json(url: str, params: dict, timeout: int = 20) -> dict:
 def fetch(
     origin: str,
     depart_month: str,
-    return_month: str,
+    return_month: str = "",
     token: str | None = None,
     destination: str = DESTINATION,
     currency: str = CURRENCY,
+    one_way: bool = False,
 ) -> list[dict]:
-    """Запрос цен на месяц вылета и месяц возврата."""
+    """Запрос цен на месяц вылета (и месяц возврата для перелётов туда-обратно)."""
     active_token = token if token is not None else TOKEN
     params = {
         "origin": origin,
         "destination": destination,
         "departure_at": depart_month,   # формат YYYY-MM
-        "return_at": return_month,
         "unique": "false",
         "sorting": "price",
         "cur": currency,
         "limit": 1000,
-        "one_way": "false",
+        "one_way": "true" if one_way else "false",
         "token": active_token,
     }
+    if not one_way and return_month:
+        params["return_at"] = return_month
     for attempt in range(3):
         try:
             data = _http_get_json(API_URL, params=params, timeout=20)
@@ -341,6 +349,7 @@ def collect(
     max_transfers: int = MAX_TRANSFERS,
     max_duration_hours: float = MAX_DURATION_HOURS,
     currency: str = CURRENCY,
+    one_way: bool = False,
     delay: float = 0.3,
 ) -> list[dict]:
     active_origins = [o.upper().strip() for o in (origins if origins is not None else ORIGINS) if o]
@@ -361,10 +370,13 @@ def collect(
         dep_to = dep_from
 
     depart_months = months_between(dep_from, dep_to)
-    return_months = months_between(
-        dep_from + timedelta(days=stay_min_days),
-        dep_to + timedelta(days=stay_max_days),
-    )
+    if one_way:
+        return_months = [""]
+    else:
+        return_months = months_between(
+            dep_from + timedelta(days=stay_min_days),
+            dep_to + timedelta(days=stay_max_days),
+        )
 
     seen, results = set(), []
     for origin in active_origins:
@@ -378,41 +390,47 @@ def collect(
                         token=token,
                         destination=dest_code,
                         currency=currency,
+                        one_way=one_way,
                     ):
                         try:
                             dep = parse_dt(t["departure_at"])
-                            ret = parse_dt(t["return_at"])
+                            ret = None if one_way else parse_dt(t["return_at"])
                         except (KeyError, ValueError):
                             continue
 
-                        stay = (ret.date() - dep.date()).days
                         if not (dep_from <= dep.date() <= dep_to):
                             continue
-                        if not (stay_min_days <= stay <= stay_max_days):
-                            continue
+                        if one_way:
+                            stay = 0
+                        else:
+                            stay = (ret.date() - dep.date()).days
+                            if not (stay_min_days <= stay <= stay_max_days):
+                                continue
                         if t.get("price", 10**9) > max_price:
                             continue
 
                         transfers_to = t.get("transfers", 0)
-                        transfers_back = t.get("return_transfers", 0)
+                        transfers_back = 0 if one_way else t.get("return_transfers", 0)
                         if max(transfers_to, transfers_back) > max_transfers:
                             continue
 
-                        dur_to = t.get("duration_to", 0) / 60   # минуты -> часы
-                        dur_back = t.get("duration_back", 0) / 60
+                        dur_to = (t.get("duration_to") or t.get("duration") or 0) / 60   # минуты -> часы
+                        dur_back = 0.0 if one_way else (t.get("duration_back", 0) / 60)
                         if max(dur_to, dur_back) > max_duration_hours:
                             continue
 
-                        key = (origin, dest_code, t["departure_at"], t["return_at"], t["price"], t.get("airline"))
+                        ret_raw = "" if one_way else t.get("return_at", "")
+                        key = (origin, dest_code, t["departure_at"], ret_raw, t["price"], t.get("airline"))
                         if key in seen:
                             continue
                         seen.add(key)
 
                         dep_str = dep.strftime("%Y-%m-%d %H:%M")
-                        ret_str = ret.strftime("%Y-%m-%d %H:%M")
+                        ret_str = "" if one_way else ret.strftime("%Y-%m-%d %H:%M")
                         results.append({
                             "origin": origin,
                             "destination": dest_code,
+                            "one_way": bool(one_way),
                             "price": t["price"],
                             "airline": t.get("airline", ""),
                             "depart": dep_str,
@@ -540,6 +558,8 @@ def parse_args(argv=None):
                         help="Максимум часов в пути в одну сторону")
     parser.add_argument("--top-n", type=int, default=TOP_N,
                         help="Сколько лучших вариантов вывести")
+    parser.add_argument("--one-way", action="store_true",
+                        help="Искать билеты только в одну сторону (без обратного перелёта)")
     parser.add_argument("--token", default=TOKEN,
                         help="Токен Travelpayouts API (по умолчанию из TP_TOKEN)")
     parser.add_argument("--interactive", "-i", action="store_true",
@@ -566,6 +586,7 @@ def main(argv=None) -> None:
         max_price=args.max_price,
         max_transfers=args.max_transfers,
         max_duration_hours=args.max_duration,
+        one_way=args.one_way,
     )
     print_table(rows, top_n=args.top_n)
     save_csv(rows)

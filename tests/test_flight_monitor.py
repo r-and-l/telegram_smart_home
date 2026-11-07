@@ -297,6 +297,41 @@ class TestFlightMonitor(unittest.TestCase):
         self.assertEqual(fm.place_search_query, "Ф")
         self.assertEqual(fm.place_search_results, [])
 
+    @patch("flight_finder.flight_finder.fetch")
+    def test_one_way_search_and_trip_link(self, mock_fetch):
+        from flight_finder import flight_finder
+        from ui.rich_views import render_flights_menu
+
+        mock_fetch.return_value = [
+            {
+                "departure_at": "2027-01-28T10:00:00Z",
+                "price": 24500,
+                "airline": "3U",
+                "transfers": 1,
+                "duration_to": 900,
+                "link": "/search/MOW2801DAD1",
+            }
+        ]
+        fm = FlightMonitor(self.app, self.tg, store=self.store)
+        fm.set_origins(["MOW"])
+        fm.set_destinations(["DAD"])
+        fm.set_one_way(True)
+        self.assertTrue(fm.one_way)
+
+        with patch.object(fm, "get_token", return_value="test_tp_token"):
+            rows = fm.run_search(send_report=False, async_run=False)
+
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]["one_way"])
+        self.assertEqual(rows[0]["return"], "")
+        self.assertEqual(rows[0]["stay_days"], 0)
+        self.assertIn("triptype=ow", rows[0]["trip_link"])
+        self.assertNotIn("rdate=", rows[0]["trip_link"])
+
+        menu_html = render_flights_menu(fm.status_summary())
+        self.assertIn("только туда", menu_html)
+        self.assertIn("triptype=ow", menu_html)
+
 
 if __name__ == "__main__":
     unittest.main()

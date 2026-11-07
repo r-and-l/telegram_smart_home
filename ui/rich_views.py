@@ -455,10 +455,11 @@ def _render_flights_results_table(results, default_dest="SGN"):
         route_cell = f"{escape(str(r['origin']))} → {escape(str(r_dest))}"
         airline_cell = escape(str(r.get("airline") or "—"))
         dep_cell = escape(str(r.get("depart", ""))[:16])
-        ret_cell = escape(str(r.get("return", ""))[:16])
-        stay_cell = f"{r['stay_days']}"
-        tr_cell = f"{r['transfers_to']}/{r['transfers_back']}"
-        hrs_cell = f"{r['hours_to']}/{r['hours_back']}ч"
+        is_ow = bool(r.get("one_way")) or not r.get("return")
+        ret_cell = "—" if is_ow else escape(str(r.get("return", ""))[:16])
+        stay_cell = "—" if is_ow else f"{r['stay_days']}"
+        tr_cell = f"{r['transfers_to']}" if is_ow else f"{r['transfers_to']}/{r['transfers_back']}"
+        hrs_cell = f"{r['hours_to']}ч" if is_ow else f"{r['hours_to']}/{r['hours_back']}ч"
 
         buy_links = []
         if r.get("link"):
@@ -493,11 +494,14 @@ def render_flights_report_html(summary):
     dest_label = summary.get("destination_label", dests_str)
     price_fmt = f"{summary['max_price']:,}".replace(",", " ")
 
+    is_one_way = bool(summary.get("one_way", False))
+    trip_mode_str = "➡️ Только в одну сторону" if is_one_way else f"🔄 Туда-обратно ({summary['stay_min_days']}–{summary['stay_max_days']} дн.)"
+
     lines = [
         f"<h3>✈️ Отчёт по билетам: {escape(origins_str)} → {escape(dest_label)}</h3>",
         '<table bordered compact>',
         f"<tr><td><b>Вылет туда</b></td><td>{escape(summary['depart_from'])} — {escape(summary['depart_to'])}</td></tr>",
-        f"<tr><td><b>Длительность</b></td><td>{summary['stay_min_days']}–{summary['stay_max_days']} дн.</td></tr>",
+        f"<tr><td><b>Формат</b></td><td>{trip_mode_str}</td></tr>",
         f"<tr><td><b>Бюджет</b></td><td>до {price_fmt} ₽ (пересадок ≤ {summary['max_transfers']})</td></tr>",
         "</table>",
     ]
@@ -530,6 +534,8 @@ def render_flights_menu(summary, sub_menu=None):
     check_time = summary["check_time"]
     max_price = summary["max_price"]
     price_fmt = f"{max_price:,}".replace(",", " ")
+    is_one_way = bool(summary.get("one_way", False))
+    trip_badge = "➡️ только туда" if is_one_way else f"🔄 туда-обратно, {summary['stay_min_days']}–{summary['stay_max_days']} дн."
     schedule_status = f"🟢 Вкл (каждый день в {escape(check_time)})" if enabled else "🔴 Выключен"
 
     lines = [
@@ -540,7 +546,7 @@ def render_flights_menu(summary, sub_menu=None):
         (
             f"<tr><td><b>📅 Вылет туда</b></td>"
             f"<td>{escape(summary['depart_from'])} — {escape(summary['depart_to'])} "
-            f"({summary['stay_min_days']}–{summary['stay_max_days']} дн.)</td></tr>"
+            f"({trip_badge})</td></tr>"
         ),
         (
             f"<tr><td><b>💰 Фильтры</b></td>"
@@ -684,6 +690,12 @@ def render_flights_menu(summary, sub_menu=None):
 
     # ─── Подменю выбора дат и длительности ───
     if sub_menu == "dates":
+        lines.append("<h4>✈️ Тип маршрута</h4>")
+        lines.append(_btn_row([
+            _btn("🔄 Туда-обратно", "/flights:one_way_dates:0", "primary" if not is_one_way else None),
+            _btn("➡️ Только в одну сторону", "/flights:one_way_dates:1", "primary" if is_one_way else None),
+        ], align="center"))
+
         lines.append("<h4>📅 Начало окна вылета туда</h4>")
         lines.append(_btn_row([
             _btn("⏪ -30д", "/flights:from:-30"),
@@ -719,30 +731,33 @@ def render_flights_menu(summary, sub_menu=None):
             _btn("⏩ +1 мес", "/flights:win:30"),
         ], align="center"))
 
-        lines.append("<h4>🏝 Длительность поездки (дней)</h4>")
-        stay_label = f"{summary['stay_min_days']}–{summary['stay_max_days']} дн."
-        lines.append(_btn_row([
-            _btn("➖ 5д", "/flights:stay_shift:-5"),
-            _btn("➖ 1д", "/flights:stay_shift:-1"),
-            _btn_disabled(stay_label),
-            _btn("➕ 1д", "/flights:stay_shift:1"),
-            _btn("➕ 5д", "/flights:stay_shift:5"),
-        ], align="center"))
+        if is_one_way:
+            lines.append("<p>➡️ <i>Выбран поиск только в одну сторону — обратный вылет и длительность пребывания не учитываются.</i></p>")
+        else:
+            lines.append("<h4>🏝 Длительность поездки (дней)</h4>")
+            stay_label = f"{summary['stay_min_days']}–{summary['stay_max_days']} дн."
+            lines.append(_btn_row([
+                _btn("➖ 5д", "/flights:stay_shift:-5"),
+                _btn("➖ 1д", "/flights:stay_shift:-1"),
+                _btn_disabled(stay_label),
+                _btn("➕ 1д", "/flights:stay_shift:1"),
+                _btn("➕ 5д", "/flights:stay_shift:5"),
+            ], align="center"))
 
-        stay_presets = [
-            ("7–10 дн", 7, 10),
-            ("12–16 дн", 12, 16),
-            ("20–25 дн", 20, 25),
-            ("27–33 дн", 27, 33),
-        ]
-        lines.append(_btn_row([
-            _btn(
-                label,
-                f"/flights:stay:{mn}:{mx}",
-                "primary" if (summary["stay_min_days"], summary["stay_max_days"]) == (mn, mx) else None,
-            )
-            for label, mn, mx in stay_presets
-        ], align="center"))
+            stay_presets = [
+                ("7–10 дн", 7, 10),
+                ("12–16 дн", 12, 16),
+                ("20–25 дн", 20, 25),
+                ("27–33 дн", 27, 33),
+            ]
+            lines.append(_btn_row([
+                _btn(
+                    label,
+                    f"/flights:stay:{mn}:{mx}",
+                    "primary" if (summary["stay_min_days"], summary["stay_max_days"]) == (mn, mx) else None,
+                )
+                for label, mn, mx in stay_presets
+            ], align="center"))
 
         lines.append(_btn_row([
             _btn("⬅️ К билетам", "/menu:flights"),
@@ -789,6 +804,10 @@ def render_flights_menu(summary, sub_menu=None):
     ], align="center"))
 
     # Кнопки перехода к настройке маршрута и дат
+    lines.append(_btn_row([
+        _btn("🔄 Туда-обратно", "/flights:one_way:0", "primary" if not is_one_way else None),
+        _btn("➡️ В одну сторону", "/flights:one_way:1", "primary" if is_one_way else None),
+    ], align="center"))
     lines.append(_btn_row([
         _btn(f"🛫 Откуда ({origins_str}) ▸", "/menu:flights_origins"),
         _btn(f"🛬 Куда ({dests_str}) ▸", "/menu:flights_dest"),

@@ -361,6 +361,14 @@ class Router:
             mode = payload.split(":", 1)[1]
             self.flight_monitor.clear_airport_search()
             target_menu = "flights_origins" if mode == "orig" else "flights_dest"
+        elif payload.startswith("one_way:"):
+            val = payload.split(":", 1)[1]
+            self.flight_monitor.set_one_way(val in ("1", "true", "True"))
+            target_menu = "flights"
+        elif payload.startswith("one_way_dates:"):
+            val = payload.split(":", 1)[1]
+            self.flight_monitor.set_one_way(val in ("1", "true", "True"))
+            target_menu = "flights_dates"
         elif payload.startswith("transfers:"):
             try:
                 tr = int(payload.split(":", 1)[1])
