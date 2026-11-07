@@ -247,12 +247,20 @@ class Router:
     def _flights(self, payload):
         """
         Команды меню авиабилетов:
-          search             — запустить поиск сейчас и прислать отчёт
-          toggle             — включить/выключить ежедневный автопоиск
-          time:<delta_min>   — сдвинуть время ежедневной проверки на N минут
-          set_time:<HH:MM>   — установить точное время ежедневной проверки
-          budget:<delta_rub> — изменить максимальный бюджет
-          reset              — вернуть настройки по умолчанию
+          search               — запустить поиск сейчас и прислать отчёт
+          toggle               — включить/выключить ежедневный автопоиск
+          time:<delta_min>     — сдвинуть время ежедневной проверки на N минут
+          set_time:<HH:MM>     — установить точное время ежедневной проверки
+          budget:<delta_rub>   — изменить максимальный бюджет
+          origin:<IATA>        — переключить город отправления
+          dest:<IATA>          — выбрать город назначения
+          from:<delta_days>    — сдвинуть дату начала окна вылета
+          to:<delta_days>      — сдвинуть дату конца окна вылета
+          span:<days>          — задать ширину окна вылета в днях
+          win:<delta_days>     — сдвинуть всё окно вылета
+          stay:<min>:<max>     — установить диапазон дней пребывания
+          stay_shift:<delta>   — сдвинуть диапазон дней пребывания
+          reset                — вернуть настройки по умолчанию
         """
         if not self.flight_monitor:
             return
@@ -262,10 +270,63 @@ class Router:
             self.menu_manager.show_menu("flights")
             return
 
+        target_menu = "flights"
+
         if payload == "toggle":
             self.flight_monitor.toggle_enabled()
         elif payload == "reset":
             self.flight_monitor.reset_settings()
+        elif payload.startswith("origin:"):
+            code = payload.split(":", 1)[1]
+            self.flight_monitor.toggle_origin(code)
+            target_menu = "flights_origins"
+        elif payload.startswith("dest:"):
+            code = payload.split(":", 1)[1]
+            self.flight_monitor.set_destination(code)
+            target_menu = "flights_dest"
+        elif payload.startswith("from:"):
+            try:
+                delta = int(payload.split(":", 1)[1])
+                self.flight_monitor.shift_depart_from(delta)
+            except ValueError:
+                return
+            target_menu = "flights_dates"
+        elif payload.startswith("to:"):
+            try:
+                delta = int(payload.split(":", 1)[1])
+                self.flight_monitor.shift_depart_to(delta)
+            except ValueError:
+                return
+            target_menu = "flights_dates"
+        elif payload.startswith("span:"):
+            try:
+                span = int(payload.split(":", 1)[1])
+                self.flight_monitor.set_window_span(span)
+            except ValueError:
+                return
+            target_menu = "flights_dates"
+        elif payload.startswith("win:"):
+            try:
+                delta = int(payload.split(":", 1)[1])
+                self.flight_monitor.shift_window(delta)
+            except ValueError:
+                return
+            target_menu = "flights_dates"
+        elif payload.startswith("stay:"):
+            parts = payload.split(":")
+            if len(parts) == 3:
+                try:
+                    self.flight_monitor.set_stay_range(int(parts[1]), int(parts[2]))
+                except ValueError:
+                    return
+            target_menu = "flights_dates"
+        elif payload.startswith("stay_shift:"):
+            try:
+                delta = int(payload.split(":", 1)[1])
+                self.flight_monitor.shift_stay_range(delta)
+            except ValueError:
+                return
+            target_menu = "flights_dates"
         elif payload.startswith("time:"):
             try:
                 delta = int(payload.split(":", 1)[1])
@@ -284,5 +345,5 @@ class Router:
         else:
             return
 
-        self.menu_manager.show_menu("flights")
+        self.menu_manager.show_menu(target_menu)
 

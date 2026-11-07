@@ -1,6 +1,6 @@
 import os
 import threading
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from html import escape
 
 from config import FLIGHT_CONFIG
@@ -9,12 +9,14 @@ from flight_finder import flight_finder
 
 class FlightMonitor:
     """
-    Сервис поиска авиабилетов (Aviasales / Travelpayouts) с ежедневным расписанием
-    и управлением из меню Telegram.
+    Сервис поиска авиабилетов (Aviasales / Travelpayouts) с настройкой маршрута,
+    дат, длительности, бюджета и ежедневного расписания из меню Telegram.
     """
 
     _MIN_PRICE = 10000
     _MAX_PRICE = 500000
+    _MIN_STAY = 1
+    _MAX_STAY = 180
 
     def __init__(self, app, telegram_api, store=None, on_update=None):
         self.app = app
@@ -28,6 +30,37 @@ class FlightMonitor:
         if not isinstance(saved, dict):
             saved = {}
 
+        default_origins = list(FLIGHT_CONFIG.get("origins", ["GOJ", "MOW"]))
+        saved_origins = saved.get("origins")
+        if isinstance(saved_origins, list) and saved_origins:
+            self.origins = [str(o).upper().strip() for o in saved_origins if o]
+        else:
+            self.origins = default_origins
+
+        self.destination = str(
+            saved.get("destination") or FLIGHT_CONFIG.get("destination", "SGN")
+        ).upper().strip()
+
+        self.depart_from = self._normalize_date(
+            saved.get("depart_from") or FLIGHT_CONFIG.get("depart_from", "2027-01-25"),
+            fallback="2027-01-25",
+        )
+        self.depart_to = self._normalize_date(
+            saved.get("depart_to") or FLIGHT_CONFIG.get("depart_to", "2027-02-05"),
+            fallback="2027-02-05",
+        )
+        if self.depart_to < self.depart_from:
+            self.depart_to = self.depart_from
+
+        self.stay_min_days = max(
+            self._MIN_STAY,
+            int(saved.get("stay_min_days") or FLIGHT_CONFIG.get("stay_min_days", 27)),
+        )
+        self.stay_max_days = max(
+            self.stay_min_days,
+            int(saved.get("stay_max_days") or FLIGHT_CONFIG.get("stay_max_days", 33)),
+        )
+
         self.enabled = bool(saved.get("enabled", FLIGHT_CONFIG.get("enabled", True)))
         self.check_time = self._normalize_time(
             saved.get("check_time") or FLIGHT_CONFIG.get("check_time", "10:00")
@@ -39,7 +72,7 @@ class FlightMonitor:
         self.last_error = saved.get("last_error")
         self.last_daily_sent_date = saved.get("last_daily_sent_date")
 
-    # ───────────── Персистентность и настройки ─────────────
+    # ───────────── Персистентность и валидация ─────────────
 
     @staticmethod
     def _normalize_time(value):
@@ -51,8 +84,25 @@ class FlightMonitor:
         except Exception:
             return "10:00"
 
+    @staticmethod
+    def _normalize_date(value, fallback="2027-01-25"):
+        try:
+            if isinstance(value, datetime):
+                return value.date().isoformat()
+            if isinstance(value, date):
+                return value.isoformat()
+            return date.fromisoformat(str(value).strip()).isoformat()
+        except Exception:
+            return fallback
+
     def _save_state(self):
         self.store.set("flight_monitor", {
+            "origins": self.origins,
+            "destination": self.destination,
+            "depart_from": self.depart_from,
+            "depart_to": self.depart_to,
+            "stay_min_days": self.stay_min_days,
+            "stay_max_days": self.stay_max_days,
             "enabled": self.enabled,
             "check_time": self.check_time,
             "max_price": self.max_price,
@@ -71,6 +121,31 @@ class FlightMonitor:
             or ""
         ).strip()
 
+    def origin_options(self):
+        opts = dict(getattr(flight_finder, "ORIGIN_AIRPORTS", {}))
+        cfg_opts = FLIGHT_CONFIG.get("origin_options")
+        if isinstance(cfg_opts, dict):
+            opts.update(cfg_opts)
+        for code in self.origins:
+            opts.setdefault(code, code)
+        return opts
+
+    def destination_options(self):
+        opts = dict(getattr(flight_finder, "DESTINATION_AIRPORTS", {}))
+        cfg_opts = FLIGHT_CONFIG.get("destination_options")
+        if isinstance(cfg_opts, dict):
+            opts.update(cfg_opts)
+        opts.setdefault(self.destination, self.destination)
+        return opts
+
+    def city_name(self, code):
+        code = str(code).upper().strip()
+        return (
+            self.origin_options().get(code)
+            or self.destination_options().get(code)
+            or code
+        )
+
     def status_summary(self):
         """Сводка состояния для отрисовки меню в Telegram."""
         return {
@@ -78,12 +153,16 @@ class FlightMonitor:
             "check_time": self.check_time,
             "max_price": self.max_price,
             "default_max_price": int(FLIGHT_CONFIG.get("max_price", 60000)),
-            "origins": list(FLIGHT_CONFIG.get("origins", ["GOJ", "MOW"])),
-            "destination": FLIGHT_CONFIG.get("destination", "SGN"),
-            "depart_from": str(FLIGHT_CONFIG.get("depart_from", "2027-01-25")),
-            "depart_to": str(FLIGHT_CONFIG.get("depart_to", "2027-02-05")),
-            "stay_min_days": int(FLIGHT_CONFIG.get("stay_min_days", 27)),
-            "stay_max_days": int(FLIGHT_CONFIG.get("stay_max_days", 33)),
+            "origins": list(self.origins),
+            "origins_labels": [f"{self.city_name(c)} ({c})" for c in self.origins],
+            "destination": self.destination,
+            "destination_label": f"{self.city_name(self.destination)} ({self.destination})",
+            "origin_options": self.origin_options(),
+            "destination_options": self.destination_options(),
+            "depart_from": self.depart_from,
+            "depart_to": self.depart_to,
+            "stay_min_days": self.stay_min_days,
+            "stay_max_days": self.stay_max_days,
             "max_transfers": int(FLIGHT_CONFIG.get("max_transfers", 1)),
             "max_duration_hours": int(FLIGHT_CONFIG.get("max_duration_hours", 24)),
             "has_token": bool(self.get_token()),
@@ -94,6 +173,92 @@ class FlightMonitor:
             "last_error": self.last_error,
         }
 
+    # ───────────── Настройка маршрута (Откуда / Куда) ─────────────
+
+    def toggle_origin(self, code):
+        """Включает или выключает аэропорт вылета (оставляя минимум один выбранный)."""
+        code = str(code).upper().strip()
+        if not code:
+            return
+        if code in self.origins:
+            if len(self.origins) > 1:
+                self.origins = [o for o in self.origins if o != code]
+        else:
+            self.origins.append(code)
+        self._save_state()
+        self.app.log(f"[FLIGHTS] Origins updated: {self.origins}")
+
+    def set_origins(self, codes):
+        cleaned = [str(c).upper().strip() for c in codes if c and str(c).strip()]
+        if cleaned:
+            self.origins = cleaned
+            self._save_state()
+            self.app.log(f"[FLIGHTS] Origins set to: {self.origins}")
+
+    def set_destination(self, code):
+        code = str(code).upper().strip()
+        if not code:
+            return
+        self.destination = code
+        self._save_state()
+        self.app.log(f"[FLIGHTS] Destination set to: {self.destination}")
+
+    # ───────────── Настройка дат и длительности ─────────────
+
+    def shift_depart_from(self, delta_days):
+        d_from = date.fromisoformat(self.depart_from) + timedelta(days=int(delta_days))
+        d_to = date.fromisoformat(self.depart_to)
+        if d_from > d_to:
+            d_to = d_from
+        self.depart_from = d_from.isoformat()
+        self.depart_to = d_to.isoformat()
+        self._save_state()
+        self.app.log(f"[FLIGHTS] Departure window updated: {self.depart_from} .. {self.depart_to}")
+
+    def shift_depart_to(self, delta_days):
+        d_from = date.fromisoformat(self.depart_from)
+        d_to = date.fromisoformat(self.depart_to) + timedelta(days=int(delta_days))
+        if d_to < d_from:
+            d_to = d_from
+        self.depart_to = d_to.isoformat()
+        self._save_state()
+        self.app.log(f"[FLIGHTS] Departure window updated: {self.depart_from} .. {self.depart_to}")
+
+    def shift_window(self, delta_days):
+        """Сдвигает всё окно вылета (начало и конец) на delta_days дней."""
+        delta = timedelta(days=int(delta_days))
+        d_from = date.fromisoformat(self.depart_from) + delta
+        d_to = date.fromisoformat(self.depart_to) + delta
+        self.depart_from = d_from.isoformat()
+        self.depart_to = d_to.isoformat()
+        self._save_state()
+        self.app.log(f"[FLIGHTS] Window shifted: {self.depart_from} .. {self.depart_to}")
+
+    def set_window_span(self, span_days):
+        """Задаёт ширину окна вылета от depart_from (например, 7, 14, 30 дней)."""
+        d_from = date.fromisoformat(self.depart_from)
+        d_to = d_from + timedelta(days=max(0, int(span_days)))
+        self.depart_to = d_to.isoformat()
+        self._save_state()
+        self.app.log(f"[FLIGHTS] Window span set ({span_days}d): {self.depart_from} .. {self.depart_to}")
+
+    def set_stay_range(self, min_days, max_days):
+        mn = max(self._MIN_STAY, min(self._MAX_STAY, int(min_days)))
+        mx = max(mn, min(self._MAX_STAY, int(max_days)))
+        self.stay_min_days = mn
+        self.stay_max_days = mx
+        self._save_state()
+        self.app.log(f"[FLIGHTS] Stay duration set: {self.stay_min_days}..{self.stay_max_days} days")
+
+    def shift_stay_range(self, delta_days):
+        delta = int(delta_days)
+        span = max(0, self.stay_max_days - self.stay_min_days)
+        new_min = max(self._MIN_STAY, min(self._MAX_STAY - span, self.stay_min_days + delta))
+        new_max = min(self._MAX_STAY, new_min + span)
+        self.set_stay_range(new_min, new_max)
+
+    # ───────────── Настройка расписания и бюджета ─────────────
+
     def toggle_enabled(self):
         self.enabled = not self.enabled
         self._save_state()
@@ -103,7 +268,6 @@ class FlightMonitor:
         normalized = self._normalize_time(hh_mm)
         self.check_time = normalized
         now_hm = datetime.now().strftime("%H:%M")
-        # Если новое время сегодня ещё не наступило, разрешаем сработать сегодня
         if normalized > now_hm and self.last_daily_sent_date == datetime.now().strftime("%Y-%m-%d"):
             self.last_daily_sent_date = None
         self._save_state()
@@ -124,6 +288,12 @@ class FlightMonitor:
         self.app.log(f"[FLIGHTS] Max price set to {self.max_price}")
 
     def reset_settings(self):
+        self.origins = list(FLIGHT_CONFIG.get("origins", ["GOJ", "MOW"]))
+        self.destination = str(FLIGHT_CONFIG.get("destination", "SGN")).upper().strip()
+        self.depart_from = self._normalize_date(FLIGHT_CONFIG.get("depart_from", "2027-01-25"))
+        self.depart_to = self._normalize_date(FLIGHT_CONFIG.get("depart_to", "2027-02-05"))
+        self.stay_min_days = int(FLIGHT_CONFIG.get("stay_min_days", 27))
+        self.stay_max_days = int(FLIGHT_CONFIG.get("stay_max_days", 33))
         self.enabled = bool(FLIGHT_CONFIG.get("enabled", True))
         self.check_time = self._normalize_time(FLIGHT_CONFIG.get("check_time", "10:00"))
         self.max_price = int(FLIGHT_CONFIG.get("max_price", 60000))
@@ -191,12 +361,12 @@ class FlightMonitor:
             top_n = int(FLIGHT_CONFIG.get("top_n", 5))
             rows = flight_finder.collect(
                 token=token,
-                origins=list(FLIGHT_CONFIG.get("origins", ["GOJ", "MOW"])),
-                destination=FLIGHT_CONFIG.get("destination", "SGN"),
-                depart_from=FLIGHT_CONFIG.get("depart_from", "2027-01-25"),
-                depart_to=FLIGHT_CONFIG.get("depart_to", "2027-02-05"),
-                stay_min_days=int(FLIGHT_CONFIG.get("stay_min_days", 27)),
-                stay_max_days=int(FLIGHT_CONFIG.get("stay_max_days", 33)),
+                origins=list(self.origins),
+                destination=self.destination,
+                depart_from=self.depart_from,
+                depart_to=self.depart_to,
+                stay_min_days=self.stay_min_days,
+                stay_max_days=self.stay_max_days,
                 max_price=self.max_price,
                 max_transfers=int(FLIGHT_CONFIG.get("max_transfers", 1)),
                 max_duration_hours=float(FLIGHT_CONFIG.get("max_duration_hours", 24)),
@@ -251,8 +421,9 @@ class FlightMonitor:
         s = self.status_summary()
         origins_str = ", ".join(s["origins"])
         dest = s["destination"]
+        dest_label = s["destination_label"]
         header = (
-            f"✈️ <b>Авиабилеты {escape(origins_str)} → {escape(dest)}</b>\n"
+            f"✈️ <b>Авиабилеты {escape(origins_str)} → {escape(dest_label)}</b>\n"
             f"📅 Вылет: {escape(s['depart_from'])} — {escape(s['depart_to'])} "
             f"({s['stay_min_days']}–{s['stay_max_days']} дн.)\n"
             f"💰 Бюджет: до {s['max_price']:,} ₽".replace(",", " ")
@@ -262,7 +433,7 @@ class FlightMonitor:
             return (
                 f"{header}\n\n"
                 "😔 Под заданные условия билетов не найдено.\n"
-                "Попробуйте увеличить бюджет в меню «✈️ Билеты»."
+                "Попробуйте изменить даты или бюджет в меню «✈️ Билеты»."
             )
 
         lines = [
@@ -271,10 +442,11 @@ class FlightMonitor:
         ]
         for idx, r in enumerate(self.last_results, start=1):
             price_fmt = f"{int(r['price']):,}".replace(",", " ")
+            r_dest = r.get("destination", dest)
             link = r.get("link") or ""
             link_html = f' · <a href="{escape(link)}">Открыть</a>' if link else ""
             lines.append(
-                f"{idx}. <b>{price_fmt} ₽</b> | {escape(str(r['origin']))} → {escape(dest)} "
+                f"{idx}. <b>{price_fmt} ₽</b> | {escape(str(r['origin']))} → {escape(str(r_dest))} "
                 f"({escape(str(r.get('airline', '—')))})\n"
                 f"   🛫 {escape(str(r['depart']))} → 🛬 {escape(str(r['return']))} ({r['stay_days']} дн.)\n"
                 f"   🔄 Пересадок: {r['transfers_to']}/{r['transfers_back']} · "

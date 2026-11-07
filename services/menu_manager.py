@@ -217,19 +217,20 @@ class TimerEditMenu(Menu):
 
 
 class FlightsMenu(Menu):
-    """Меню поиска авиабилетов и настройки ежедневного расписания"""
-    def __init__(self, app, flight_monitor):
+    """Меню поиска авиабилетов и настройки маршрута, дат и расписания"""
+    def __init__(self, app, flight_monitor, sub_menu=None):
         self.app = app
         self.flight_monitor = flight_monitor
+        self.sub_menu = sub_menu
 
     def render(self):
         summary = self.flight_monitor.status_summary()
         blocks, fallback_text = build_flights_rich_blocks(summary)
-        return blocks, fallback_text, build_flights_keyboard(summary), "html"
+        return blocks, fallback_text, build_flights_keyboard(summary, sub_menu=self.sub_menu), "html"
 
     def render_html(self):
         summary = self.flight_monitor.status_summary()
-        return rich_views.render_flights_menu(summary)
+        return rich_views.render_flights_menu(summary, sub_menu=self.sub_menu)
 
 
 class MenuManager:
@@ -239,6 +240,12 @@ class MenuManager:
         ("ac_breather:", "breather"),
         ("ac:", None),
     )
+    _FLIGHT_SUBMENUS = {
+        "flights": None,
+        "flights_origins": "origins",
+        "flights_dest": "dest",
+        "flights_dates": "dates",
+    }
 
     def __init__(self, app, telegram_api, light_monitor=None, flight_monitor=None):
         self.app = app
@@ -369,6 +376,9 @@ class MenuManager:
 
         if key.startswith("timer_edit:") and self.light_monitor is not None:
             return TimerEditMenu(self.app, self.light_monitor, key[len("timer_edit:"):])
+
+        if key in self._FLIGHT_SUBMENUS and self.flight_monitor is not None:
+            return FlightsMenu(self.app, self.flight_monitor, sub_menu=self._FLIGHT_SUBMENUS[key])
 
         return self.menus.get(key)
 

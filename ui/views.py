@@ -492,8 +492,73 @@ def build_flights_rich_blocks(summary):
     return blocks, "\n".join(fallback_lines)
 
 
-def build_flights_keyboard(summary):
-    """Инлайн-клавиатура для меню поиска авиабилетов."""
+def build_flights_keyboard(summary, sub_menu=None):
+    """Инлайн-клавиатура для меню поиска авиабилетов (основная и подменю)."""
+    origins = summary["origins"]
+    origins_str = ", ".join(origins)
+    dest = summary["destination"]
+
+    if sub_menu == "origins":
+        items = [
+            (f"{'🟢' if code in origins else '⚫'} {city} ({code})", f"/flights:origin:{code}")
+            for code, city in summary.get("origin_options", {}).items()
+        ]
+        kb = build_keyboard(items, per_row=2)
+        kb.append([("⬅️ К билетам", "/menu:flights"), ("🏠 Главная", "/back")])
+        return kb
+
+    if sub_menu == "dest":
+        items = [
+            (f"{'🟢' if code == dest else '✈️'} {city} ({code})", f"/flights:dest:{code}")
+            for code, city in summary.get("destination_options", {}).items()
+        ]
+        kb = build_keyboard(items, per_row=2)
+        kb.append([("⬅️ К билетам", "/menu:flights"), ("🏠 Главная", "/back")])
+        return kb
+
+    if sub_menu == "dates":
+        return [
+            [
+                ("⏪ От -30д", "/flights:from:-30"),
+                ("◀️ От -7д", "/flights:from:-7"),
+                ("-1д", "/flights:from:-1"),
+                ("+1д", "/flights:from:1"),
+                ("▶️ От +7д", "/flights:from:7"),
+                ("⏩ От +30д", "/flights:from:30"),
+            ],
+            [
+                ("◀️ До -7д", "/flights:to:-7"),
+                ("До -1д", "/flights:to:-1"),
+                ("До +1д", "/flights:to:1"),
+                ("▶️ До +7д", "/flights:to:7"),
+            ],
+            [
+                ("Окно 7д", "/flights:span:7"),
+                ("Окно 11д", "/flights:span:11"),
+                ("Окно 14д", "/flights:span:14"),
+                ("Окно 30д", "/flights:span:30"),
+            ],
+            [
+                ("⏪ Окно -1м", "/flights:win:-30"),
+                ("◀️ Окно -7д", "/flights:win:-7"),
+                ("▶️ Окно +7д", "/flights:win:7"),
+                ("⏩ Окно +1м", "/flights:win:30"),
+            ],
+            [
+                ("Дней -5", "/flights:stay_shift:-5"),
+                ("Дней -1", "/flights:stay_shift:-1"),
+                ("Дней +1", "/flights:stay_shift:1"),
+                ("Дней +5", "/flights:stay_shift:5"),
+            ],
+            [
+                ("7–10 дн", "/flights:stay:7:10"),
+                ("12–16 дн", "/flights:stay:12:16"),
+                ("20–25 дн", "/flights:stay:20:25"),
+                ("27–33 дн", "/flights:stay:27:33"),
+            ],
+            [("⬅️ К билетам", "/menu:flights"), ("🏠 Главная", "/back")],
+        ]
+
     enabled = summary["enabled"]
     search_label = "⏳ Поиск..." if summary.get("is_searching") else "🔍 Найти сейчас"
     toggle_btn = (
@@ -503,6 +568,13 @@ def build_flights_keyboard(summary):
     )
     return [
         [(search_label, "/flights:search")],
+        [
+            (f"🛫 Откуда ({origins_str}) ▸", "/menu:flights_origins"),
+            (f"🛬 Куда ({dest}) ▸", "/menu:flights_dest"),
+        ],
+        [
+            (f"📅 Даты ({summary['depart_from']} .. {summary['depart_to']}) ▸", "/menu:flights_dates"),
+        ],
         [
             ("➖ 1ч", "/flights:time:-60"),
             ("➖ 15м", "/flights:time:-15"),

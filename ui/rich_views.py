@@ -428,17 +428,19 @@ def render_timer_edit_menu(name, entity, minutes, default_minutes, is_on):
 
 # ───────────── Авиабилеты (Flight Finder) ─────────────
 
-def render_flights_menu(summary):
-    """Rich HTML для меню поиска авиабилетов и настройки ежедневной проверки."""
-    origins_str = ", ".join(summary["origins"])
+def render_flights_menu(summary, sub_menu=None):
+    """Rich HTML для меню поиска авиабилетов (основной экран, выбор города вылета, назначения и дат)."""
+    origins = summary["origins"]
+    origins_str = ", ".join(origins)
     dest = summary["destination"]
+    dest_label = summary.get("destination_label", dest)
     enabled = summary["enabled"]
     check_time = summary["check_time"]
     max_price = summary["max_price"]
     price_fmt = f"{max_price:,}".replace(",", " ")
 
     lines = [
-        f"<h3>✈️ Авиабилеты: {escape(origins_str)} → {escape(dest)}</h3>",
+        f"<h3>✈️ Авиабилеты: {escape(origins_str)} → {escape(dest_label)}</h3>",
         (
             f"<p>📅 <b>Вылет:</b> {escape(summary['depart_from'])} — {escape(summary['depart_to'])} "
             f"({summary['stay_min_days']}–{summary['stay_max_days']} дн.)<br>"
@@ -448,6 +450,115 @@ def render_flights_menu(summary):
         ),
     ]
 
+    # ─── Подменю выбора городов отправления ───
+    if sub_menu == "origins":
+        lines.append("<h4>🛫 Города отправления (можно выбрать несколько)</h4>")
+        origin_opts = list(summary.get("origin_options", {}).items())
+        for i in range(0, len(origin_opts), 2):
+            pair = origin_opts[i:i + 2]
+            row_btns = []
+            for code, city_name in pair:
+                active = code in origins
+                icon = "🟢" if active else "⚫"
+                style = "success" if active else None
+                row_btns.append(_btn(f"{icon} {city_name} ({code})", f"/flights:origin:{code}", style))
+            lines.append(_btn_row(row_btns, align="center"))
+
+        lines.append(_btn_row([
+            _btn("⬅️ К билетам", "/menu:flights"),
+            _btn("🏠 Главная", "/back"),
+        ], align="center"))
+        return "\n".join(lines)
+
+    # ─── Подменю выбора пункта назначения ───
+    if sub_menu == "dest":
+        lines.append("<h4>🛬 Пункт назначения</h4>")
+        dest_opts = list(summary.get("destination_options", {}).items())
+        for i in range(0, len(dest_opts), 2):
+            pair = dest_opts[i:i + 2]
+            row_btns = []
+            for code, city_name in pair:
+                active = code == dest
+                icon = "🟢" if active else "✈️"
+                style = "success" if active else None
+                row_btns.append(_btn(f"{icon} {city_name} ({code})", f"/flights:dest:{code}", style))
+            lines.append(_btn_row(row_btns, align="center"))
+
+        lines.append(_btn_row([
+            _btn("⬅️ К билетам", "/menu:flights"),
+            _btn("🏠 Главная", "/back"),
+        ], align="center"))
+        return "\n".join(lines)
+
+    # ─── Подменю выбора дат и длительности ───
+    if sub_menu == "dates":
+        lines.append("<h4>📅 Начало окна вылета туда</h4>")
+        lines.append(_btn_row([
+            _btn("⏪ -30д", "/flights:from:-30"),
+            _btn("◀️ -7д", "/flights:from:-7"),
+            _btn("-1д", "/flights:from:-1"),
+            _btn_disabled(summary["depart_from"]),
+            _btn("+1д", "/flights:from:1"),
+            _btn("▶️ +7д", "/flights:from:7"),
+            _btn("⏩ +30д", "/flights:from:30"),
+        ], align="center"))
+
+        lines.append("<h4>📅 Конец окна вылета туда</h4>")
+        lines.append(_btn_row([
+            _btn("◀️ -7д", "/flights:to:-7"),
+            _btn("-1д", "/flights:to:-1"),
+            _btn_disabled(summary["depart_to"]),
+            _btn("+1д", "/flights:to:1"),
+            _btn("▶️ +7д", "/flights:to:7"),
+        ], align="center"))
+
+        lines.append(_btn_row([
+            _btn("Окно 7д", "/flights:span:7"),
+            _btn("Окно 11д", "/flights:span:11"),
+            _btn("Окно 14д", "/flights:span:14"),
+            _btn("Окно 30д", "/flights:span:30"),
+        ], align="center"))
+
+        lines.append("<h4>🔄 Сдвинуть всё окно вылета</h4>")
+        lines.append(_btn_row([
+            _btn("⏪ -1 мес", "/flights:win:-30"),
+            _btn("◀️ -7 дн", "/flights:win:-7"),
+            _btn("▶️ +7 дн", "/flights:win:7"),
+            _btn("⏩ +1 мес", "/flights:win:30"),
+        ], align="center"))
+
+        lines.append("<h4>🏝 Длительность поездки (дней)</h4>")
+        stay_label = f"{summary['stay_min_days']}–{summary['stay_max_days']} дн."
+        lines.append(_btn_row([
+            _btn("➖ 5д", "/flights:stay_shift:-5"),
+            _btn("➖ 1д", "/flights:stay_shift:-1"),
+            _btn_disabled(stay_label),
+            _btn("➕ 1д", "/flights:stay_shift:1"),
+            _btn("➕ 5д", "/flights:stay_shift:5"),
+        ], align="center"))
+
+        stay_presets = [
+            ("7–10 дн", 7, 10),
+            ("12–16 дн", 12, 16),
+            ("20–25 дн", 20, 25),
+            ("27–33 дн", 27, 33),
+        ]
+        lines.append(_btn_row([
+            _btn(
+                label,
+                f"/flights:stay:{mn}:{mx}",
+                "primary" if (summary["stay_min_days"], summary["stay_max_days"]) == (mn, mx) else None,
+            )
+            for label, mn, mx in stay_presets
+        ], align="center"))
+
+        lines.append(_btn_row([
+            _btn("⬅️ К билетам", "/menu:flights"),
+            _btn("🏠 Главная", "/back"),
+        ], align="center"))
+        return "\n".join(lines)
+
+    # ─── Основной экран ───
     schedule_status = f"🟢 Вкл (каждый день в {escape(check_time)})" if enabled else "🔴 Выключен"
     lines.append(f"<p>⏰ <b>Автопоиск:</b> {schedule_status}</p>")
 
@@ -473,7 +584,8 @@ def render_flights_menu(summary):
         lines.append("<tr><th>Цена</th><th>Рейс</th><th>Туда / Обратно</th><th>Инфо</th></tr>")
         for r in results:
             r_price = f"{int(r['price']):,} ₽".replace(",", " ")
-            route_cell = f"{escape(str(r['origin']))}→{escape(dest)} ({escape(str(r.get('airline', '—')))})"
+            r_dest = r.get("destination", dest)
+            route_cell = f"{escape(str(r['origin']))}→{escape(str(r_dest))} ({escape(str(r.get('airline', '—')))})"
             dates_cell = f"{escape(str(r['depart'])[:10])} – {escape(str(r['return'])[:10])}"
             info_cell = (
                 f"{r['stay_days']}д, пер.{r['transfers_to']}/{r['transfers_back']}, "
@@ -489,6 +601,15 @@ def render_flights_menu(summary):
     search_label = "⏳ Поиск..." if summary["is_searching"] else "🔍 Найти сейчас и прислать отчёт"
     lines.append(_btn_row([
         _btn(search_label, "/flights:search", "primary"),
+    ], align="center"))
+
+    # Кнопки перехода к настройке маршрута и дат
+    lines.append(_btn_row([
+        _btn(f"🛫 Откуда ({origins_str}) ▸", "/menu:flights_origins"),
+        _btn(f"🛬 Куда ({dest}) ▸", "/menu:flights_dest"),
+    ], align="center"))
+    lines.append(_btn_row([
+        _btn(f"📅 Даты и дни ({summary['depart_from']} .. {summary['depart_to']}) ▸", "/menu:flights_dates"),
     ], align="center"))
 
     # Настройка времени ежедневной проверки

@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """
-Поиск дешёвых авиабилетов в Хошимин через Aviasales (Travelpayouts) Data API.
+Поиск дешёвых авиабилетов через Aviasales (Travelpayouts) Data API.
 
 Установка:   pip install -r requirements.txt
 Токен:       бесплатно на https://www.travelpayouts.com (раздел «Инструменты» -> API)
 Запуск:      export TP_TOKEN="ваш_токен"
              python flight_finder.py
+             python flight_finder.py --origins GOJ MOW --destination BKK --depart-from 2027-02-01 --depart-to 2027-02-15
+             python flight_finder.py --interactive
 Раз в N часов (cron):   0 */6 * * * TP_TOKEN=xxx python /путь/flight_finder.py
 
 Опционально Telegram-уведомления: TG_BOT_TOKEN и TG_CHAT_ID.
 """
 
+import argparse
 import csv
 import json
 import os
@@ -26,7 +29,7 @@ try:
 except ImportError:
     requests = None
 
-# ===================== НАСТРОЙКИ =====================
+# ===================== НАСТРОЙКИ ПО УМОЛЧАНИЮ =====================
 ORIGINS = ["GOJ", "MOW"]          # GOJ = Нижний Новгород, MOW = все аэропорты Москвы
 DESTINATION = "SGN"               # Хошимин
 
@@ -42,10 +45,40 @@ TOP_N = 15                        # сколько лучших варианто
 
 CURRENCY = "rub"
 CSV_FILE = "flights_found.csv"
-# ======================================================
+
+ORIGIN_AIRPORTS = {
+    "GOJ": "Нижний Новгород",
+    "MOW": "Москва",
+    "LED": "Санкт-Петербург",
+    "KZN": "Казань",
+    "SVX": "Екатеринбург",
+    "AER": "Сочи",
+}
+
+DESTINATION_AIRPORTS = {
+    "SGN": "Хошимин",
+    "CXR": "Нячанг",
+    "HAN": "Ханой",
+    "BKK": "Бангкок",
+    "HKT": "Пхукет",
+    "DPS": "Бали",
+    "DXB": "Дубай",
+    "IST": "Стамбул",
+    "AYT": "Анталья",
+    "CMB": "Коломбо",
+    "HAK": "Хайнань",
+    "KUL": "Куала-Лумпур",
+}
+# ==================================================================
 
 API_URL = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates"
 TOKEN = os.getenv("TP_TOKEN")
+
+
+def city_label(iata: str) -> str:
+    code = str(iata).upper().strip()
+    name = ORIGIN_AIRPORTS.get(code) or DESTINATION_AIRPORTS.get(code)
+    return f"{name} ({code})" if name else code
 
 
 def _http_get_json(url: str, params: dict, timeout: int = 20) -> dict:
@@ -131,9 +164,12 @@ def collect(
     currency: str = CURRENCY,
     delay: float = 0.3,
 ) -> list[dict]:
-    active_origins = origins if origins is not None else ORIGINS
+    active_origins = [o.upper().strip() for o in (origins if origins is not None else ORIGINS) if o]
+    dest_code = destination.upper().strip()
     dep_from = _as_date(depart_from)
     dep_to = _as_date(depart_to)
+    if dep_to < dep_from:
+        dep_to = dep_from
 
     depart_months = months_between(dep_from, dep_to)
     return_months = months_between(
@@ -150,7 +186,7 @@ def collect(
                     dm,
                     rm,
                     token=token,
-                    destination=destination,
+                    destination=dest_code,
                     currency=currency,
                 ):
                     try:
@@ -184,7 +220,7 @@ def collect(
 
                     results.append({
                         "origin": origin,
-                        "destination": destination,
+                        "destination": dest_code,
                         "price": t["price"],
                         "airline": t.get("airline", ""),
                         "depart": dep.strftime("%Y-%m-%d %H:%M"),
@@ -213,29 +249,31 @@ def save_csv(rows: list[dict], csv_file: str = CSV_FILE) -> None:
         w.writerows(rows)
 
 
-def print_table(rows: list[dict]) -> None:
+def print_table(rows: list[dict], top_n: int = TOP_N) -> None:
     if not rows:
         print("Под ваши условия билетов не найдено. Ослабьте фильтры (MAX_PRICE, MAX_TRANSFERS, даты).")
         return
-    print(f"\nНайдено вариантов: {len(rows)}. Лучшие {min(TOP_N, len(rows))}:\n")
-    print(f"{'Цена':>8} | {'Из':3} | {'Авиакомп.':9} | {'Туда':16} | {'Обратно':16} | "
+    print(f"\nНайдено вариантов: {len(rows)}. Лучшие {min(top_n, len(rows))}:\n")
+    print(f"{'Цена':>8} | {'Из':3} | {'Куда':4} | {'Авиакомп.':9} | {'Туда':16} | {'Обратно':16} | "
           f"{'Дней':>4} | {'Перес.':6} | {'Часов':9}")
-    print("-" * 95)
-    for r in rows[:TOP_N]:
-        print(f"{r['price']:>8} | {r['origin']:3} | {r['airline']:9} | {r['depart']:16} | "
+    print("-" * 102)
+    for r in rows[:top_n]:
+        dest = r.get("destination", DESTINATION)
+        print(f"{r['price']:>8} | {r['origin']:3} | {dest:4} | {r['airline']:9} | {r['depart']:16} | "
               f"{r['return']:16} | {r['stay_days']:>4} | "
               f"{r['transfers_to']}/{r['transfers_back']:<4} | {r['hours_to']}/{r['hours_back']}")
     print("\nСсылка на лучший вариант:\n", rows[0]["link"])
 
 
-def notify_telegram(rows: list[dict]) -> None:
+def notify_telegram(rows: list[dict], destination: str = DESTINATION) -> None:
     bot, chat = os.getenv("TG_BOT_TOKEN"), os.getenv("TG_CHAT_ID")
     if not (bot and chat and rows):
         return
     best = rows[0]
-    text = (f"✈️ Лучший билет в Хошимин: {best['price']} ₽\n"
-            f"{best['origin']} → SGN, {best['airline']}\n"
-            f"Туда: {best['depart']}\nОбратно: {best['return']}\n"
+    dest = best.get("destination", destination)
+    text = (f"✈️ Лучший билет ({best['origin']} → {dest}): {best['price']} ₽\n"
+            f"Авиакомпания: {best['airline']}\n"
+            f"Туда: {best['depart']}\nОбратно: {best['return']} ({best['stay_days']} дн.)\n"
             f"Пересадок: {best['transfers_to']}/{best['transfers_back']}\n{best['link']}")
     try:
         if requests is not None:
@@ -248,13 +286,92 @@ def notify_telegram(rows: list[dict]) -> None:
         print(f"[!] Telegram: {e}", file=sys.stderr)
 
 
-def main() -> None:
-    if not TOKEN:
-        sys.exit("Задайте токен: export TP_TOKEN='ваш_токен' (получить на travelpayouts.com)")
-    rows = collect()
-    print_table(rows)
+def _prompt_interactive(args):
+    """Интерактивный ввод параметров в консоли при флаге --interactive."""
+    print("=== Настройка поиска авиабилетов ===")
+    print("Популярные города вылета:", ", ".join(f"{k} ({v})" for k, v in ORIGIN_AIRPORTS.items()))
+    raw_origins = input(f"Города вылета через пробел [{' '.join(args.origins)}]: ").strip()
+    if raw_origins:
+        args.origins = [x.upper() for x in raw_origins.replace(",", " ").split() if x]
+
+    print("Популярные направления:", ", ".join(f"{k} ({v})" for k, v in DESTINATION_AIRPORTS.items()))
+    raw_dest = input(f"Пункт назначения (IATA) [{args.destination}]: ").strip()
+    if raw_dest:
+        args.destination = raw_dest.upper()
+
+    raw_from = input(f"Вылет туда с (YYYY-MM-DD) [{args.depart_from}]: ").strip()
+    if raw_from:
+        args.depart_from = raw_from
+
+    raw_to = input(f"Вылет туда по (YYYY-MM-DD) [{args.depart_to}]: ").strip()
+    if raw_to:
+        args.depart_to = raw_to
+
+    raw_stay_min = input(f"Мин. дней пребывания [{args.stay_min}]: ").strip()
+    if raw_stay_min:
+        args.stay_min = int(raw_stay_min)
+
+    raw_stay_max = input(f"Макс. дней пребывания [{args.stay_max}]: ").strip()
+    if raw_stay_max:
+        args.stay_max = int(raw_stay_max)
+
+    raw_price = input(f"Макс. бюджет туда-обратно, ₽ [{args.max_price}]: ").strip()
+    if raw_price:
+        args.max_price = int(raw_price)
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Поиск авиабилетов через Aviasales / Travelpayouts API")
+    parser.add_argument("--origins", nargs="+", default=list(ORIGINS),
+                        help="Коды IATA городов вылета (например: GOJ MOW LED)")
+    parser.add_argument("--destination", default=DESTINATION,
+                        help="Код IATA пункта назначения (например: SGN, BKK, HKT, DPS)")
+    parser.add_argument("--depart-from", default=DEPART_FROM.isoformat(),
+                        help="Начало окна вылета туда в формате YYYY-MM-DD")
+    parser.add_argument("--depart-to", default=DEPART_TO.isoformat(),
+                        help="Конец окна вылета туда в формате YYYY-MM-DD")
+    parser.add_argument("--stay-min", type=int, default=STAY_MIN_DAYS,
+                        help="Минимальная длительность поездки (дней)")
+    parser.add_argument("--stay-max", type=int, default=STAY_MAX_DAYS,
+                        help="Максимальная длительность поездки (дней)")
+    parser.add_argument("--max-price", type=int, default=MAX_PRICE,
+                        help="Максимальная цена билета туда-обратно (руб)")
+    parser.add_argument("--max-transfers", type=int, default=MAX_TRANSFERS,
+                        help="Максимум пересадок в одну сторону")
+    parser.add_argument("--max-duration", type=float, default=MAX_DURATION_HOURS,
+                        help="Максимум часов в пути в одну сторону")
+    parser.add_argument("--top-n", type=int, default=TOP_N,
+                        help="Сколько лучших вариантов вывести")
+    parser.add_argument("--token", default=TOKEN,
+                        help="Токен Travelpayouts API (по умолчанию из TP_TOKEN)")
+    parser.add_argument("--interactive", "-i", action="store_true",
+                        help="Интерактивный выбор маршрута и дат перед запуском")
+    return parser.parse_args(argv)
+
+
+def main(argv=None) -> None:
+    args = parse_args(argv)
+    if args.interactive:
+        _prompt_interactive(args)
+
+    if not args.token:
+        sys.exit("Задайте токен: export TP_TOKEN='ваш_токен' или --token 'ваш_токен' (travelpayouts.com)")
+
+    rows = collect(
+        token=args.token,
+        origins=args.origins,
+        destination=args.destination,
+        depart_from=args.depart_from,
+        depart_to=args.depart_to,
+        stay_min_days=args.stay_min,
+        stay_max_days=args.stay_max,
+        max_price=args.max_price,
+        max_transfers=args.max_transfers,
+        max_duration_hours=args.max_duration,
+    )
+    print_table(rows, top_n=args.top_n)
     save_csv(rows)
-    notify_telegram(rows)
+    notify_telegram(rows, destination=args.destination)
     if rows:
         print(f"\nВсе результаты сохранены в {CSV_FILE}")
 
