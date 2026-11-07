@@ -11,8 +11,8 @@ from ui import rich_views
 class FlightMonitor:
     """
     Сервис поиска авиабилетов (Aviasales / Travelpayouts + прямые ссылки на Trip.com)
-    с поддержкой нескольких городов вылета и назначения, настройкой дат, бюджета
-    и ежедневного расписания из меню Telegram.
+    с поиском аэропортов по базе Aviasales, поддержкой нескольких городов вылета
+    и назначения, настройкой дат, пересадок, бюджета и ежедневного расписания.
     """
 
     _MIN_PRICE = 10000
@@ -31,6 +31,18 @@ class FlightMonitor:
         saved = self.store.get("flight_monitor", {})
         if not isinstance(saved, dict):
             saved = {}
+
+        # Пользовательский кэш названий аэропортов, найденных через поиск по БД Aviasales
+        saved_custom = saved.get("custom_airports")
+        self.custom_airports = dict(saved_custom) if isinstance(saved_custom, dict) else {}
+
+        # Результаты последнего поиска аэропортов по базе Aviasales
+        self.place_search_query = saved.get("place_search_query") or ""
+        self.place_search_results = (
+            list(saved["place_search_results"])
+            if isinstance(saved.get("place_search_results"), list)
+            else []
+        )
 
         default_origins = list(FLIGHT_CONFIG.get("origins", ["GOJ", "MOW"]))
         saved_origins = saved.get("origins")
@@ -75,9 +87,23 @@ class FlightMonitor:
             saved.get("check_time") or FLIGHT_CONFIG.get("check_time", "10:00")
         )
         self.max_price = int(saved.get("max_price") or FLIGHT_CONFIG.get("max_price", 60000))
+        self.max_transfers = int(
+            saved.get("max_transfers")
+            if saved.get("max_transfers") is not None
+            else FLIGHT_CONFIG.get("max_transfers", 2)
+        )
+        self.max_duration_hours = int(
+            saved.get("max_duration_hours")
+            or FLIGHT_CONFIG.get("max_duration_hours", 36)
+        )
         self.last_check = saved.get("last_check")
         self.last_results = saved.get("last_results", [])
         self.last_total = int(saved.get("last_total", len(self.last_results)))
+        self.last_counts_by_dest = (
+            dict(saved["last_counts_by_dest"])
+            if isinstance(saved.get("last_counts_by_dest"), dict)
+            else {}
+        )
         self.last_error = saved.get("last_error")
         self.last_daily_sent_date = saved.get("last_daily_sent_date")
 
@@ -113,6 +139,9 @@ class FlightMonitor:
             "origins": self.origins,
             "destinations": self.destinations,
             "destination": self.destination,
+            "custom_airports": self.custom_airports,
+            "place_search_query": self.place_search_query,
+            "place_search_results": self.place_search_results,
             "depart_from": self.depart_from,
             "depart_to": self.depart_to,
             "stay_min_days": self.stay_min_days,
@@ -120,9 +149,12 @@ class FlightMonitor:
             "enabled": self.enabled,
             "check_time": self.check_time,
             "max_price": self.max_price,
+            "max_transfers": self.max_transfers,
+            "max_duration_hours": self.max_duration_hours,
             "last_check": self.last_check,
             "last_results": self.last_results,
             "last_total": self.last_total,
+            "last_counts_by_dest": self.last_counts_by_dest,
             "last_error": self.last_error,
             "last_daily_sent_date": self.last_daily_sent_date,
         })
@@ -141,7 +173,7 @@ class FlightMonitor:
         if isinstance(cfg_opts, dict):
             opts.update(cfg_opts)
         for code in self.origins:
-            opts.setdefault(code, code)
+            opts.setdefault(code, self.custom_airports.get(code, code))
         return opts
 
     def destination_options(self):
@@ -150,16 +182,42 @@ class FlightMonitor:
         if isinstance(cfg_opts, dict):
             opts.update(cfg_opts)
         for code in self.destinations:
-            opts.setdefault(code, code)
+            opts.setdefault(code, self.custom_airports.get(code, code))
         return opts
 
     def city_name(self, code):
         code = str(code).upper().strip()
         return (
-            self.origin_options().get(code)
+            self.custom_airports.get(code)
+            or self.origin_options().get(code)
             or self.destination_options().get(code)
             or code
         )
+
+    def search_airports(self, query):
+        """
+        Ищет аэропорты и города в базе Aviasales по названию страны, города или коду IATA.
+        Сохраняет найденные названия в custom_airports и возвращает список результатов.
+        """
+        q = str(query or "").strip()
+        if not q:
+            return []
+        found = flight_finder.search_places(q, locale="ru", limit=12)
+        for item in found:
+            code = item.get("code")
+            name = item.get("name")
+            if code and name:
+                self.custom_airports[code] = name
+        self.place_search_query = q
+        self.place_search_results = found
+        self._save_state()
+        self.app.log(f"[FLIGHTS] Airport DB search '{q}': found {len(found)} items")
+        return found
+
+    def clear_airport_search(self):
+        self.place_search_query = ""
+        self.place_search_results = []
+        self._save_state()
 
     def status_summary(self):
         """Сводка состояния для отрисовки меню и табличного отчёта в Telegram."""
@@ -177,17 +235,20 @@ class FlightMonitor:
             "destination_label": ", ".join(dest_labels),
             "origin_options": self.origin_options(),
             "destination_options": self.destination_options(),
+            "place_search_query": self.place_search_query,
+            "place_search_results": list(self.place_search_results),
             "depart_from": self.depart_from,
             "depart_to": self.depart_to,
             "stay_min_days": self.stay_min_days,
             "stay_max_days": self.stay_max_days,
-            "max_transfers": int(FLIGHT_CONFIG.get("max_transfers", 1)),
-            "max_duration_hours": int(FLIGHT_CONFIG.get("max_duration_hours", 24)),
+            "max_transfers": self.max_transfers,
+            "max_duration_hours": self.max_duration_hours,
             "has_token": bool(self.get_token()),
             "is_searching": self.is_searching,
             "last_check": self.last_check,
             "last_results": list(self.last_results),
             "last_total": self.last_total,
+            "last_counts_by_dest": dict(self.last_counts_by_dest),
             "last_error": self.last_error,
         }
 
@@ -241,7 +302,7 @@ class FlightMonitor:
         self._save_state()
         self.app.log(f"[FLIGHTS] Destination set to: {self.destinations}")
 
-    # ───────────── Настройка дат и длительности ─────────────
+    # ───────────── Настройка дат, длительности и пересадок ─────────────
 
     def shift_depart_from(self, delta_days):
         d_from = date.fromisoformat(self.depart_from) + timedelta(days=int(delta_days))
@@ -295,6 +356,16 @@ class FlightMonitor:
         new_max = min(self._MAX_STAY, new_min + span)
         self.set_stay_range(new_min, new_max)
 
+    def set_max_transfers(self, transfers):
+        self.max_transfers = max(0, min(4, int(transfers)))
+        self._save_state()
+        self.app.log(f"[FLIGHTS] Max transfers set to {self.max_transfers}")
+
+    def set_max_duration(self, hours):
+        self.max_duration_hours = max(6, min(72, int(hours)))
+        self._save_state()
+        self.app.log(f"[FLIGHTS] Max duration set to {self.max_duration_hours}h")
+
     # ───────────── Настройка расписания и бюджета ─────────────
 
     def toggle_enabled(self):
@@ -331,6 +402,8 @@ class FlightMonitor:
             [FLIGHT_CONFIG["destination"]] if FLIGHT_CONFIG.get("destination") else ["SGN", "DAD"]
         )
         self.destinations = [str(d).upper().strip() for d in cfg_dests if d]
+        self.place_search_query = ""
+        self.place_search_results = []
         self.depart_from = self._normalize_date(FLIGHT_CONFIG.get("depart_from", "2027-01-25"))
         self.depart_to = self._normalize_date(FLIGHT_CONFIG.get("depart_to", "2027-02-05"))
         self.stay_min_days = int(FLIGHT_CONFIG.get("stay_min_days", 27))
@@ -338,6 +411,8 @@ class FlightMonitor:
         self.enabled = bool(FLIGHT_CONFIG.get("enabled", True))
         self.check_time = self._normalize_time(FLIGHT_CONFIG.get("check_time", "10:00"))
         self.max_price = int(FLIGHT_CONFIG.get("max_price", 60000))
+        self.max_transfers = int(FLIGHT_CONFIG.get("max_transfers", 2))
+        self.max_duration_hours = int(FLIGHT_CONFIG.get("max_duration_hours", 36))
         self._save_state()
         self.app.log("[FLIGHTS] Settings reset to defaults from FLIGHT_CONFIG")
 
@@ -369,6 +444,29 @@ class FlightMonitor:
             thread.start()
             return None
         return self._execute_search(send_report=send_report)
+
+    def _select_balanced_results(self, rows, top_n):
+        """
+        Отбирает лучшие рейсы так, чтобы каждое выбранное направление (например, SGN и DAD)
+        было представлено в таблице, а не вытеснялось целиком более дешёвым городом.
+        """
+        if len(self.destinations) <= 1:
+            return rows[:top_n]
+
+        per_dest = max(3, top_n)
+        by_dest = {d: [] for d in self.destinations}
+        for r in rows:
+            d = r.get("destination", self.destination)
+            if d not in by_dest:
+                by_dest[d] = []
+            if len(by_dest[d]) < per_dest:
+                by_dest[d].append(r)
+
+        combined = []
+        for d in self.destinations:
+            combined.extend(by_dest.get(d, []))
+        combined.sort(key=lambda x: (x["price"], x.get("hours_to", 0) + x.get("hours_back", 0)))
+        return combined
 
     def _execute_search(self, send_report=True):
         with self._lock:
@@ -409,19 +507,21 @@ class FlightMonitor:
                 stay_min_days=self.stay_min_days,
                 stay_max_days=self.stay_max_days,
                 max_price=self.max_price,
-                max_transfers=int(FLIGHT_CONFIG.get("max_transfers", 1)),
-                max_duration_hours=float(FLIGHT_CONFIG.get("max_duration_hours", 24)),
+                max_transfers=self.max_transfers,
+                max_duration_hours=float(self.max_duration_hours),
                 currency=FLIGHT_CONFIG.get("currency", "rub"),
                 delay=0.15,
             )
 
-            # Гарантируем наличие trip_link для каждого результата
             currency = FLIGHT_CONFIG.get("currency", "rub")
+            counts_by_dest = {d: 0 for d in self.destinations}
             for r in rows:
+                d = r.get("destination", self.destination)
+                counts_by_dest[d] = counts_by_dest.get(d, 0) + 1
                 if not r.get("trip_link"):
                     r["trip_link"] = flight_finder.build_trip_link(
                         r.get("origin", ""),
-                        r.get("destination", self.destination),
+                        d,
                         r.get("depart", ""),
                         r.get("return", ""),
                         currency=currency,
@@ -439,11 +539,12 @@ class FlightMonitor:
 
             self.last_check = now_str
             self.last_total = len(rows)
-            self.last_results = rows[:top_n]
+            self.last_counts_by_dest = counts_by_dest
+            self.last_results = self._select_balanced_results(rows, top_n)
             self.last_error = None
             self._save_state()
 
-            self.app.log(f"[FLIGHTS] Search complete: found {len(rows)} flights")
+            self.app.log(f"[FLIGHTS] Search complete: found {len(rows)} flights ({counts_by_dest})")
 
             if send_report:
                 summary = self.status_summary()
@@ -456,7 +557,6 @@ class FlightMonitor:
                         rich_html=report_rich_html,
                     )
                 except TypeError:
-                    # Для тестовых заглушек send_notification без rich_html
                     self.telegram.send_notification(report_text, parse_mode="html")
 
             return rows
@@ -495,7 +595,7 @@ class FlightMonitor:
             return (
                 f"{header}\n\n"
                 "😔 Под заданные условия билетов не найдено.\n"
-                "Попробуйте изменить даты или бюджет в меню «✈️ Билеты»."
+                "Попробуйте увеличить бюджет, число пересадок или время в пути в меню «✈️ Билеты»."
             )
 
         table_lines = [

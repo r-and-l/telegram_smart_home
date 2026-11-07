@@ -554,6 +554,34 @@ def render_flights_menu(summary, sub_menu=None):
     # ─── Подменю выбора городов отправления ───
     if sub_menu == "origins":
         lines.append("<h4>🛫 Города отправления (можно выбрать несколько)</h4>")
+        lines.append(
+            "<p>🔎 <b>Поиск по базе Aviasales:</b> напишите прямо в чат название страны, "
+            "города или IATA-код (например: <code>Россия</code>, <code>Самара</code>, <code>Казахстан</code>) "
+            "— список аэропортов появится ниже.</p>"
+        )
+        lines.append(_btn_row([
+            _btn("🇷🇺 Россия", "/flights:qorig:Россия"),
+            _btn("🇰🇿 Казахстан", "/flights:qorig:Казахстан"),
+            _btn("🇧🇾 Беларусь", "/flights:qorig:Беларусь"),
+        ], align="center"))
+
+        search_res = summary.get("place_search_results") or []
+        search_q = summary.get("place_search_query") or ""
+        if search_res:
+            lines.append(f"<h4>🔎 Найдено по запросу «{escape(search_q)}»:</h4>")
+            for i in range(0, len(search_res), 2):
+                pair = search_res[i:i + 2]
+                row_btns = []
+                for item in pair:
+                    code = item["code"]
+                    label = item.get("label") or item.get("name") or code
+                    active = code in origins
+                    icon = "🟢" if active else "➕"
+                    style = "success" if active else "primary"
+                    row_btns.append(_btn(f"{icon} {label} ({code})", f"/flights:origin:{code}", style))
+                lines.append(_btn_row(row_btns, align="center"))
+
+        lines.append("<h4>📌 Популярные города вылета:</h4>")
         origin_opts = list(summary.get("origin_options", {}).items())
         for i in range(0, len(origin_opts), 2):
             pair = origin_opts[i:i + 2]
@@ -571,9 +599,50 @@ def render_flights_menu(summary, sub_menu=None):
         ], align="center"))
         return "\n".join(lines)
 
-    # ─── Подменю выбора пунктов назначения (мультивыбор 2 и более) ───
+    # ─── Подменю выбора пунктов назначения (мультивыбор 2 и более + поиск по БД) ───
     if sub_menu == "dest":
         lines.append("<h4>🛬 Пункты назначения (можно выбрать 2 и более)</h4>")
+        lines.append(
+            "<p>🔎 <b>Поиск по базе Aviasales:</b> напишите прямо в чат страну или город "
+            "(например: <code>Вьетнам</code>, <code>Таиланд</code>, <code>Япония</code>, <code>Фукуок</code>) "
+            "или нажмите на страну ниже:</p>"
+        )
+        lines.append(_btn_row([
+            _btn("🇻🇳 Вьетнам", "/flights:qdest:Вьетнам"),
+            _btn("🇹🇭 Таиланд", "/flights:qdest:Таиланд"),
+            _btn("🇹🇷 Турция", "/flights:qdest:Турция"),
+            _btn("🇮🇩 Индонезия", "/flights:qdest:Индонезия"),
+        ], align="center"))
+        lines.append(_btn_row([
+            _btn("🇨🇳 Китай", "/flights:qdest:Китай"),
+            _btn("🇦🇪 ОАЭ", "/flights:qdest:ОАЭ"),
+            _btn("🇱🇰 Шри-Ланка", "/flights:qdest:Шри-Ланка"),
+            _btn("🇲🇾 Малайзия", "/flights:qdest:Малайзия"),
+        ], align="center"))
+        lines.append(_btn_row([
+            _btn("🇯🇵 Япония", "/flights:qdest:Япония"),
+            _btn("🇰🇷 Корея", "/flights:qdest:Южная Корея"),
+            _btn("🇪🇬 Египет", "/flights:qdest:Египет"),
+            _btn("🇬🇪 Грузия", "/flights:qdest:Грузия"),
+        ], align="center"))
+
+        search_res = summary.get("place_search_results") or []
+        search_q = summary.get("place_search_query") or ""
+        if search_res:
+            lines.append(f"<h4>🔎 Аэропорты по запросу «{escape(search_q)}»:</h4>")
+            for i in range(0, len(search_res), 2):
+                pair = search_res[i:i + 2]
+                row_btns = []
+                for item in pair:
+                    code = item["code"]
+                    label = item.get("label") or item.get("name") or code
+                    active = code in dests
+                    icon = "🟢" if active else "➕"
+                    style = "success" if active else "primary"
+                    row_btns.append(_btn(f"{icon} {label} ({code})", f"/flights:dest:{code}", style))
+                lines.append(_btn_row(row_btns, align="center"))
+
+        lines.append("<h4>📌 Выбранные и популярные направления:</h4>")
         dest_opts = list(summary.get("destination_options", {}).items())
         for i in range(0, len(dest_opts), 2):
             pair = dest_opts[i:i + 2]
@@ -671,9 +740,14 @@ def render_flights_menu(summary, sub_menu=None):
     elif summary["last_error"]:
         lines.append(f"<p>⚠️ <b>Ошибка:</b> {escape(str(summary['last_error']))}</p>")
     elif summary["last_check"]:
+        counts = summary.get("last_counts_by_dest") or {}
+        counts_str = ""
+        if counts:
+            parts = [f"{escape(k)}: <b>{v}</b>" for k, v in counts.items()]
+            counts_str = " (" + " · ".join(parts) + ")"
         lines.append(
-            f"<p>🕒 Последняя проверка: {escape(str(summary['last_check']))} "
-            f"(найдено: <b>{summary['last_total']}</b>)</p>"
+            f"<p>🕒 Последняя проверка: {escape(str(summary['last_check']))} — "
+            f"всего найдено: <b>{summary['last_total']}</b>{counts_str}</p>"
         )
 
     results = summary.get("last_results") or []
@@ -699,6 +773,22 @@ def render_flights_menu(summary, sub_menu=None):
     ], align="center"))
     lines.append(_btn_row([
         _btn(f"📅 Даты и дни ({summary['depart_from']} .. {summary['depart_to']}) ▸", "/menu:flights_dates"),
+    ], align="center"))
+
+    # Настройка пересадок и макс. времени в пути (важно для Дананга и регионов)
+    lines.append("<h4>🔄 Пересадки и время в пути</h4>")
+    cur_tr = summary.get("max_transfers", 2)
+    cur_dur = summary.get("max_duration_hours", 36)
+    lines.append(_btn_row([
+        _btn("Прямые", "/flights:transfers:0", "primary" if cur_tr == 0 else None),
+        _btn("≤ 1 пер.", "/flights:transfers:1", "primary" if cur_tr == 1 else None),
+        _btn("≤ 2 пер.", "/flights:transfers:2", "primary" if cur_tr == 2 else None),
+        _btn("≤ 3 пер.", "/flights:transfers:3", "primary" if cur_tr == 3 else None),
+    ], align="center"))
+    lines.append(_btn_row([
+        _btn("≤ 24 ч", "/flights:duration:24", "primary" if cur_dur == 24 else None),
+        _btn("≤ 36 ч", "/flights:duration:36", "primary" if cur_dur == 36 else None),
+        _btn("≤ 48 ч", "/flights:duration:48", "primary" if cur_dur == 48 else None),
     ], align="center"))
 
     # Настройка времени ежедневной проверки

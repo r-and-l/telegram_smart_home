@@ -64,6 +64,9 @@ class FakeTelegram:
         self.notifications.append((text, inline_keyboard, parse_mode, rich_html))
         return len(self.notifications)
 
+    def delete_notification(self, message_id):
+        return True
+
 
 class TestFlightMonitor(unittest.TestCase):
     def setUp(self):
@@ -184,6 +187,81 @@ class TestFlightMonitor(unittest.TestCase):
         self.assertEqual(fm_reloaded.depart_from, "2027-02-01")
         self.assertEqual(fm_reloaded.depart_to, "2027-02-15")
         self.assertEqual((fm_reloaded.stay_min_days, fm_reloaded.stay_max_days), (12, 16))
+
+    @patch("flight_finder.flight_finder.search_places")
+    def test_airport_database_search_via_text_and_buttons(self, mock_search_places):
+        mock_search_places.return_value = [
+            {"code": "SGN", "name": "Хошимин", "country": "Вьетнам", "label": "Хошимин, Вьетнам"},
+            {"code": "DAD", "name": "Дананг", "country": "Вьетнам", "label": "Дананг, Вьетнам"},
+            {"code": "PQC", "name": "Фукуок", "country": "Вьетнам", "label": "Фукуок, Вьетнам"},
+        ]
+        lm = LightMonitor(self.app, self.tg, store=self.store)
+        fm = FlightMonitor(self.app, self.tg, store=self.store)
+        mm = MenuManager(self.app, self.tg, light_monitor=lm, flight_monitor=fm)
+        auto = Automations(self.app, self.tg, mm)
+        router = Router(self.app, mm, lm, auto, self.tg, flight_monitor=fm)
+
+        # Открываем меню «Куда» и пишем в чат «вьетнам»
+        router.inline_callback("telegram_callback", {"command": "/menu:flights_dest", "chat_id": 12345}, {})
+        router.telegram_text("telegram_text", {"text": "вьетнам", "chat_id": 12345, "id": 999}, {})
+
+        mock_search_places.assert_called_with("вьетнам", locale="ru", limit=12)
+        self.assertIn("Фукуок, Вьетнам (PQC)", self.tg.rendered[-1]["rich_html"])
+
+        # Выбираем найденный аэропорт Фукуок (PQC)
+        router.inline_callback("telegram_callback", {"command": "/flights:dest:PQC", "chat_id": 12345}, {})
+        self.assertIn("PQC", fm.destinations)
+        self.assertEqual(fm.city_name("PQC"), "Фукуок")
+
+    @patch("flight_finder.flight_finder.collect")
+    @patch("flight_finder.flight_finder.save_csv")
+    def test_balanced_results_include_all_selected_destinations(self, _mock_csv, mock_collect):
+        # 6 дешёвых билетов в SGN и 2 чуть дороже в DAD — оба города должны попасть в таблицу
+        sgn_flights = [
+            {
+                "origin": "MOW",
+                "destination": "SGN",
+                "price": 48000 + i * 500,
+                "airline": "MU",
+                "depart": "2027-01-28 19:00",
+                "return": "2027-02-25 11:30",
+                "stay_days": 28,
+                "transfers_to": 1,
+                "transfers_back": 1,
+                "hours_to": 15.0,
+                "hours_back": 16.0,
+                "link": "https://www.aviasales.ru/search/1",
+            }
+            for i in range(6)
+        ]
+        dad_flights = [
+            {
+                "origin": "MOW",
+                "destination": "DAD",
+                "price": 57000 + i * 500,
+                "airline": "CZ",
+                "depart": "2027-01-29 20:00",
+                "return": "2027-02-26 14:00",
+                "stay_days": 28,
+                "transfers_to": 2,
+                "transfers_back": 2,
+                "hours_to": 22.0,
+                "hours_back": 23.0,
+                "link": "https://www.aviasales.ru/search/2",
+            }
+            for i in range(2)
+        ]
+        mock_collect.return_value = sgn_flights + dad_flights
+
+        fm = FlightMonitor(self.app, self.tg, store=self.store)
+        fm.set_destinations(["SGN", "DAD"])
+        with patch.object(fm, "get_token", return_value="test_tp_token"):
+            fm.run_search(send_report=False, async_run=False)
+
+        dests_in_table = {r["destination"] for r in fm.last_results}
+        self.assertIn("SGN", dests_in_table)
+        self.assertIn("DAD", dests_in_table)
+        self.assertEqual(fm.last_counts_by_dest, {"SGN": 6, "DAD": 2})
 
 
 if __name__ == "__main__":

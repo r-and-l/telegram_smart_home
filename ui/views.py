@@ -508,20 +508,49 @@ def build_flights_keyboard(summary, sub_menu=None):
     dests_str = ", ".join(dests)
 
     if sub_menu == "origins":
+        kb = [
+            [
+                ("🇷🇺 Россия", "/flights:qorig:Россия"),
+                ("🇰🇿 Казахстан", "/flights:qorig:Казахстан"),
+                ("🇧🇾 Беларусь", "/flights:qorig:Беларусь"),
+            ]
+        ]
+        for item in summary.get("place_search_results") or []:
+            code = item["code"]
+            label = item.get("label") or item.get("name") or code
+            kb.append([(f"{'🟢' if code in origins else '➕'} {label} ({code})", f"/flights:origin:{code}")])
         items = [
             (f"{'🟢' if code in origins else '⚫'} {city} ({code})", f"/flights:origin:{code}")
             for code, city in summary.get("origin_options", {}).items()
         ]
-        kb = build_keyboard(items, per_row=2)
+        kb.extend(build_keyboard(items, per_row=2))
         kb.append([("⬅️ К билетам", "/menu:flights"), ("🏠 Главная", "/back")])
         return kb
 
     if sub_menu == "dest":
+        kb = [
+            [
+                ("🇻🇳 Вьетнам", "/flights:qdest:Вьетнам"),
+                ("🇹🇭 Таиланд", "/flights:qdest:Таиланд"),
+                ("🇹🇷 Турция", "/flights:qdest:Турция"),
+                ("🇮🇩 Индонезия", "/flights:qdest:Индонезия"),
+            ],
+            [
+                ("🇨🇳 Китай", "/flights:qdest:Китай"),
+                ("🇦🇪 ОАЭ", "/flights:qdest:ОАЭ"),
+                ("🇱🇰 Шри-Ланка", "/flights:qdest:Шри-Ланка"),
+                ("🇲🇾 Малайзия", "/flights:qdest:Малайзия"),
+            ],
+        ]
+        for item in summary.get("place_search_results") or []:
+            code = item["code"]
+            label = item.get("label") or item.get("name") or code
+            kb.append([(f"{'🟢' if code in dests else '➕'} {label} ({code})", f"/flights:dest:{code}")])
         items = [
             (f"{'🟢' if code in dests else '⚫'} {city} ({code})", f"/flights:dest:{code}")
             for code, city in summary.get("destination_options", {}).items()
         ]
-        kb = build_keyboard(items, per_row=2)
+        kb.extend(build_keyboard(items, per_row=2))
         kb.append([("⬅️ К билетам", "/menu:flights"), ("🏠 Главная", "/back")])
         return kb
 
@@ -583,6 +612,17 @@ def build_flights_keyboard(summary, sub_menu=None):
         ],
         [
             (f"📅 Даты ({summary['depart_from']} .. {summary['depart_to']}) ▸", "/menu:flights_dates"),
+        ],
+        [
+            ("Прямые", "/flights:transfers:0"),
+            ("≤ 1 пер.", "/flights:transfers:1"),
+            ("≤ 2 пер.", "/flights:transfers:2"),
+            ("≤ 3 пер.", "/flights:transfers:3"),
+        ],
+        [
+            ("≤ 24 ч", "/flights:duration:24"),
+            ("≤ 36 ч", "/flights:duration:36"),
+            ("≤ 48 ч", "/flights:duration:48"),
         ],
         [
             ("➖ 1ч", "/flights:time:-60"),

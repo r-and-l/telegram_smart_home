@@ -75,7 +75,81 @@ DESTINATION_AIRPORTS = {
 # ==================================================================
 
 API_URL = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates"
+AUTOCOMPLETE_URL = "https://autocomplete.travelpayouts.com/places2"
 TOKEN = os.getenv("TP_TOKEN")
+
+# Коды городов, где в ценовом кэше Aviasales используется код основного аэропорта
+_CITY_TO_AIRPORT_CODE = {
+    "NHA": "CXR",  # Нячанг -> аэропорт Камрань (CXR)
+}
+
+
+def search_places(query: str, locale: str = "ru", limit: int = 12) -> list[dict]:
+    """
+    Ищет города и аэропорты в базе Aviasales по названию страны, города или IATA-коду.
+    Например, по запросу «Вьетнам» вернёт Хошимин (SGN), Дананг (DAD), Нячанг (CXR),
+    Фукуок (PQC), Ханой (HAN), Далат (DLI) и т.д.
+    """
+    q = str(query or "").strip()
+    if not q:
+        return []
+    params = [
+        ("term", q),
+        ("locale", locale),
+        ("types[]", "city"),
+        ("types[]", "airport"),
+    ]
+    try:
+        if requests is not None:
+            r = requests.get(AUTOCOMPLETE_URL, params=params, timeout=10)
+            r.raise_for_status()
+            items = r.json()
+        else:
+            qs = urllib.parse.urlencode(params)
+            req = urllib.request.Request(f"{AUTOCOMPLETE_URL}?{qs}")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                items = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        print(f"[!] Ошибка поиска аэропортов '{q}': {e}", file=sys.stderr)
+        return []
+
+    if not isinstance(items, list):
+        return []
+
+    seen_codes = set()
+    results = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        raw_code = str(item.get("code") or "").upper().strip()
+        if not raw_code:
+            continue
+        code = _CITY_TO_AIRPORT_CODE.get(raw_code, raw_code)
+        if code in seen_codes:
+            continue
+        seen_codes.add(code)
+
+        name = str(item.get("name") or code).strip()
+        city_name = str(item.get("city_name") or "").strip()
+        country = str(item.get("country_name") or "").strip()
+        place_type = item.get("type")
+
+        if place_type == "airport" and city_name and city_name.lower() != name.lower():
+            display_name = f"{city_name} · {name}"
+        else:
+            display_name = name
+
+        label = f"{display_name}, {country}" if country else display_name
+        results.append({
+            "code": code,
+            "name": display_name,
+            "country": country,
+            "label": label,
+        })
+        if len(results) >= limit:
+            break
+
+    return results
 
 
 def city_label(iata: str) -> str:

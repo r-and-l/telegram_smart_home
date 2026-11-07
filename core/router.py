@@ -48,6 +48,7 @@ class Router:
 
         self.app.listen_event(self.telegram_command, "telegram_command")
         self.app.listen_event(self.inline_callback, "telegram_callback")
+        self.app.listen_event(self.telegram_text, "telegram_text")
 
     # ───────────── Точки входа ─────────────
 
@@ -59,6 +60,41 @@ class Router:
         if command == "/start":
             self.telegram.reset_message_id()
             self.menu_manager.show_main_menu()
+        elif command in ("/find", "/search") and self.flight_monitor:
+            args = data.get("args")
+            query = " ".join(args) if isinstance(args, list) else str(args or "")
+            if query.strip():
+                self.flight_monitor.search_airports(query.strip())
+                target = (
+                    "flights_origins"
+                    if self.menu_manager.current_menu == "flights_origins"
+                    else "flights_dest"
+                )
+                self.menu_manager.show_menu(target)
+
+    def telegram_text(self, event_name, data, kwargs):
+        """
+        Обработка текстовых сообщений: когда открыто меню авиабилетов (особенно «Откуда» или «Куда»),
+        текст (например, «Вьетнам», «Таиланд», «Самара») ищется в базе аэропортов Aviasales.
+        """
+        text = str(data.get("text") or "").strip()
+        if not text or text.startswith("/") or not self.flight_monitor:
+            return
+        cur = self.menu_manager.current_menu or ""
+        if not cur.startswith("flights"):
+            return
+
+        self.telegram.update_chat_id(data.get("chat_id"))
+        self.app.log(f"[FLIGHTS] Text airport search: {text}")
+        self.flight_monitor.search_airports(text)
+
+        # Удаляем сообщение пользователя из чата, чтобы не засорять интерфейс
+        user_msg_id = data.get("id") or data.get("message_id")
+        if user_msg_id:
+            self.telegram.delete_notification(user_msg_id)
+
+        target = "flights_origins" if cur == "flights_origins" else "flights_dest"
+        self.menu_manager.show_menu(target)
 
     def inline_callback(self, event_name, data, kwargs):
         command = data.get("command", "")
@@ -303,6 +339,26 @@ class Router:
             code = payload.split(":", 1)[1]
             self.flight_monitor.toggle_destination(code)
             target_menu = "flights_dest"
+        elif payload.startswith("qorig:"):
+            query = payload.split(":", 1)[1]
+            self.flight_monitor.search_airports(query)
+            target_menu = "flights_origins"
+        elif payload.startswith("qdest:"):
+            query = payload.split(":", 1)[1]
+            self.flight_monitor.search_airports(query)
+            target_menu = "flights_dest"
+        elif payload.startswith("transfers:"):
+            try:
+                tr = int(payload.split(":", 1)[1])
+                self.flight_monitor.set_max_transfers(tr)
+            except ValueError:
+                return
+        elif payload.startswith("duration:"):
+            try:
+                hrs = int(payload.split(":", 1)[1])
+                self.flight_monitor.set_max_duration(hrs)
+            except ValueError:
+                return
         elif payload.startswith("from:"):
             try:
                 delta = int(payload.split(":", 1)[1])
