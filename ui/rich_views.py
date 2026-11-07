@@ -551,48 +551,112 @@ def render_flights_menu(summary, sub_menu=None):
         "</table>",
     ]
 
-    # ─── Подменю выбора городов отправления ───
-    if sub_menu == "origins":
-        lines.append("<h4>🛫 Города отправления (можно выбрать несколько)</h4>")
-        lines.append(
-            "<p>🔎 <b>Поиск по базе Aviasales:</b> напишите прямо в чат название страны, "
-            "города или IATA-код (например: <code>Россия</code>, <code>Самара</code>, <code>Казахстан</code>) "
-            "— список аэропортов появится ниже.</p>"
-        )
-        lines.append(_btn_row([
-            _btn("🇷🇺 Россия", "/flights:qorig:Россия"),
-            _btn("🇰🇿 Казахстан", "/flights:qorig:Казахстан"),
-            _btn("🇧🇾 Беларусь", "/flights:qorig:Беларусь"),
-        ], align="center"))
+    def _render_in_message_airport_selector(mode, selected_codes, groups_dict, all_options):
+        """
+        Рендерит встроенный прямо в сообщение поиск аэропортов (результаты из БД Aviasales,
+        раскрывающиеся на клиенте <details>-аккордеоны по странам/регионам и экранную мини-клавиатуру).
+        """
+        toggle_cmd = "origin" if mode == "orig" else "dest"
+        sec = []
 
+        # 1. Быстрые кнопки поиска + результаты из живой БД Aviasales
         search_res = summary.get("place_search_results") or []
         search_q = summary.get("place_search_query") or ""
         if search_res:
-            lines.append(f"<h4>🔎 Найдено по запросу «{escape(search_q)}»:</h4>")
+            sec.append("<details open>")
+            sec.append(
+                f"<summary>🔎 <b>Найдено в БД Aviasales по запросу «{escape(search_q)}» ({len(search_res)})</b></summary>"
+            )
             for i in range(0, len(search_res), 2):
                 pair = search_res[i:i + 2]
                 row_btns = []
                 for item in pair:
                     code = item["code"]
                     label = item.get("label") or item.get("name") or code
-                    active = code in origins
+                    active = code in selected_codes
                     icon = "🟢" if active else "➕"
                     style = "success" if active else "primary"
-                    row_btns.append(_btn(f"{icon} {label} ({code})", f"/flights:origin:{code}", style))
-                lines.append(_btn_row(row_btns, align="center"))
+                    row_btns.append(_btn(f"{icon} {label} ({code})", f"/flights:{toggle_cmd}:{code}", style))
+                sec.append(_btn_row(row_btns, align="center"))
+            sec.append("</details>")
 
-        lines.append("<h4>📌 Популярные города вылета:</h4>")
-        origin_opts = list(summary.get("origin_options", {}).items())
-        for i in range(0, len(origin_opts), 2):
-            pair = origin_opts[i:i + 2]
-            row_btns = []
-            for code, city_name in pair:
-                active = code in origins
-                icon = "🟢" if active else "⚫"
-                style = "success" if active else None
-                row_btns.append(_btn(f"{icon} {city_name} ({code})", f"/flights:origin:{code}", style))
-            lines.append(_btn_row(row_btns, align="center"))
+        # 2. Встроенная прямо в сообщение экранная клавиатура (по образцу HTMLBubbles)
+        kb_open = " open" if search_q else ""
+        q_display = search_q if search_q else "пусто — нажимайте буквы"
+        sec.append(f"<details{kb_open}>")
+        sec.append(
+            f"<summary>⌨️ <b>Ввести название буквами прямо в сообщении</b>"
+            f"{f' («{escape(search_q)}»)' if search_q else ''}</summary>"
+        )
+        sec.append(_btn_row([
+            _btn_disabled(f"🔎 {q_display}"),
+            _btn("⌫", f"/flights:kbs:{mode}"),
+            _btn("✖ Сброс", f"/flights:kclr:{mode}", "danger" if search_q else None),
+        ], align="center"))
+        kb_rows = [
+            ["А", "Б", "В", "Г", "Д", "Е", "Ж", "З"],
+            ["И", "Й", "К", "Л", "М", "Н", "О", "П"],
+            ["Р", "С", "Т", "У", "Ф", "Х", "Ц", "Ч"],
+            ["Ш", "Щ", "Э", "Ю", "Я", "-"],
+        ]
+        for row_chars in kb_rows:
+            sec.append(_btn_row([
+                _btn(ch, f"/flights:kch:{mode}:{ch}") for ch in row_chars
+            ], align="center"))
+        sec.append("</details>")
 
+        # 3. Мгновенно раскрывающиеся прямо в сообщении аккордеоны стран и регионов (<details>)
+        seen_codes = set()
+        for group_title, airports in groups_dict.items():
+            seen_codes.update(airports.keys())
+            active_in_group = [c for c in airports if c in selected_codes]
+            open_attr = " open" if active_in_group else ""
+            badge = f" — выбрано: {', '.join(active_in_group)}" if active_in_group else ""
+            sec.append(f"<details{open_attr}>")
+            sec.append(f"<summary><b>{escape(group_title)}</b>{escape(badge)}</summary>")
+            items = list(airports.items())
+            for i in range(0, len(items), 2):
+                pair = items[i:i + 2]
+                row_btns = []
+                for code, city_name in pair:
+                    active = code in selected_codes
+                    icon = "🟢" if active else "⚫"
+                    style = "success" if active else None
+                    row_btns.append(_btn(f"{icon} {city_name} ({code})", f"/flights:{toggle_cmd}:{code}", style))
+                sec.append(_btn_row(row_btns, align="center"))
+            sec.append("</details>")
+
+        # Пользовательские аэропорты из поиска, не входящие в стандартные группы
+        extra_items = [(c, n) for c, n in all_options.items() if c not in seen_codes]
+        if extra_items:
+            sec.append("<details open>")
+            sec.append("<summary>⭐ <b>Добавленные из поиска аэропорты</b></summary>")
+            for i in range(0, len(extra_items), 2):
+                pair = extra_items[i:i + 2]
+                row_btns = []
+                for code, city_name in pair:
+                    active = code in selected_codes
+                    icon = "🟢" if active else "⚫"
+                    style = "success" if active else None
+                    row_btns.append(_btn(f"{icon} {city_name} ({code})", f"/flights:{toggle_cmd}:{code}", style))
+                sec.append(_btn_row(row_btns, align="center"))
+            sec.append("</details>")
+
+        return sec
+
+    # ─── Подменю выбора городов отправления ───
+    if sub_menu == "origins":
+        lines.append("<h4>🛫 Города отправления (можно выбрать несколько)</h4>")
+        lines.append(
+            "<p>💡 Нажмите на регион ниже, чтобы <b>мгновенно раскрыть список прямо в сообщении</b>, "
+            "воспользуйтесь встроенной клавиатурой или просто напишите город/страну в чат:</p>"
+        )
+        lines.extend(_render_in_message_airport_selector(
+            mode="orig",
+            selected_codes=origins,
+            groups_dict=summary.get("origin_groups", {}),
+            all_options=summary.get("origin_options", {}),
+        ))
         lines.append(_btn_row([
             _btn("⬅️ К билетам", "/menu:flights"),
             _btn("🏠 Главная", "/back"),
@@ -603,57 +667,15 @@ def render_flights_menu(summary, sub_menu=None):
     if sub_menu == "dest":
         lines.append("<h4>🛬 Пункты назначения (можно выбрать 2 и более)</h4>")
         lines.append(
-            "<p>🔎 <b>Поиск по базе Aviasales:</b> напишите прямо в чат страну или город "
-            "(например: <code>Вьетнам</code>, <code>Таиланд</code>, <code>Япония</code>, <code>Фукуок</code>) "
-            "или нажмите на страну ниже:</p>"
+            "<p>💡 Нажмите на любую страну ниже, чтобы <b>мгновенно раскрыть её аэропорты прямо в сообщении</b>, "
+            "откройте встроенную клавиатуру букв или напишите страну/город в чат:</p>"
         )
-        lines.append(_btn_row([
-            _btn("🇻🇳 Вьетнам", "/flights:qdest:Вьетнам"),
-            _btn("🇹🇭 Таиланд", "/flights:qdest:Таиланд"),
-            _btn("🇹🇷 Турция", "/flights:qdest:Турция"),
-            _btn("🇮🇩 Индонезия", "/flights:qdest:Индонезия"),
-        ], align="center"))
-        lines.append(_btn_row([
-            _btn("🇨🇳 Китай", "/flights:qdest:Китай"),
-            _btn("🇦🇪 ОАЭ", "/flights:qdest:ОАЭ"),
-            _btn("🇱🇰 Шри-Ланка", "/flights:qdest:Шри-Ланка"),
-            _btn("🇲🇾 Малайзия", "/flights:qdest:Малайзия"),
-        ], align="center"))
-        lines.append(_btn_row([
-            _btn("🇯🇵 Япония", "/flights:qdest:Япония"),
-            _btn("🇰🇷 Корея", "/flights:qdest:Южная Корея"),
-            _btn("🇪🇬 Египет", "/flights:qdest:Египет"),
-            _btn("🇬🇪 Грузия", "/flights:qdest:Грузия"),
-        ], align="center"))
-
-        search_res = summary.get("place_search_results") or []
-        search_q = summary.get("place_search_query") or ""
-        if search_res:
-            lines.append(f"<h4>🔎 Аэропорты по запросу «{escape(search_q)}»:</h4>")
-            for i in range(0, len(search_res), 2):
-                pair = search_res[i:i + 2]
-                row_btns = []
-                for item in pair:
-                    code = item["code"]
-                    label = item.get("label") or item.get("name") or code
-                    active = code in dests
-                    icon = "🟢" if active else "➕"
-                    style = "success" if active else "primary"
-                    row_btns.append(_btn(f"{icon} {label} ({code})", f"/flights:dest:{code}", style))
-                lines.append(_btn_row(row_btns, align="center"))
-
-        lines.append("<h4>📌 Выбранные и популярные направления:</h4>")
-        dest_opts = list(summary.get("destination_options", {}).items())
-        for i in range(0, len(dest_opts), 2):
-            pair = dest_opts[i:i + 2]
-            row_btns = []
-            for code, city_name in pair:
-                active = code in dests
-                icon = "🟢" if active else "⚫"
-                style = "success" if active else None
-                row_btns.append(_btn(f"{icon} {city_name} ({code})", f"/flights:dest:{code}", style))
-            lines.append(_btn_row(row_btns, align="center"))
-
+        lines.extend(_render_in_message_airport_selector(
+            mode="dest",
+            selected_codes=dests,
+            groups_dict=summary.get("destination_groups", {}),
+            all_options=summary.get("destination_options", {}),
+        ))
         lines.append(_btn_row([
             _btn("⬅️ К билетам", "/menu:flights"),
             _btn("🏠 Главная", "/back"),

@@ -263,6 +263,40 @@ class TestFlightMonitor(unittest.TestCase):
         self.assertIn("DAD", dests_in_table)
         self.assertEqual(fm.last_counts_by_dest, {"SGN": 6, "DAD": 2})
 
+    @patch("flight_finder.flight_finder.search_places")
+    def test_in_message_details_accordions_and_keyboard_search(self, mock_search_places):
+        from ui.rich_views import render_flights_menu
+        mock_search_places.return_value = [
+            {"code": "PQC", "name": "Фукуок", "country_name": "Вьетнам", "label": "Фукуок, Вьетнам"},
+        ]
+        fm = FlightMonitor(self.app, self.tg, store=self.store)
+
+        # 1) Проверяем, что меню назначения рендерит раскрывающиеся <details><summary> аккордеоны стран
+        dest_html = render_flights_menu(fm.status_summary(), sub_menu="dest")
+        self.assertIn("<details open>", dest_html)
+        self.assertIn("<summary><b>🇻🇳 Вьетнам</b>", dest_html)
+        self.assertIn("/flights:kch:dest:В", dest_html)
+
+        # 2) Вводим 2 буквы через встроенную в сообщение клавиатуру
+        fm.append_search_char("Ф")
+        self.assertEqual(fm.place_search_query, "Ф")
+        mock_search_places.assert_not_called()
+
+        fm.append_search_char("У")
+        self.assertEqual(fm.place_search_query, "ФУ")
+        mock_search_places.assert_called_once_with("ФУ", locale="ru", limit=12)
+        self.assertEqual(len(fm.place_search_results), 1)
+
+        # 3) Проверяем рендер результатов поиска внутри открытого <details open>
+        dest_html_after = render_flights_menu(fm.status_summary(), sub_menu="dest")
+        self.assertIn("Найдено в БД Aviasales по запросу «ФУ»", dest_html_after)
+        self.assertIn("/flights:dest:PQC", dest_html_after)
+
+        # 4) Backspace до 1 символа очищает результаты
+        fm.backspace_search_char()
+        self.assertEqual(fm.place_search_query, "Ф")
+        self.assertEqual(fm.place_search_results, [])
+
 
 if __name__ == "__main__":
     unittest.main()

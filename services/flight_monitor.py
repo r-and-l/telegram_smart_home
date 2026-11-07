@@ -219,6 +219,31 @@ class FlightMonitor:
         self.place_search_results = []
         self._save_state()
 
+    def append_search_char(self, ch):
+        """Добавляет символ из встроенной в сообщение клавиатуры и запускает поиск от 2 букв."""
+        c = str(ch or "")
+        if not c:
+            return
+        new_q = (self.place_search_query or "") + c
+        self.place_search_query = new_q
+        if len(new_q.strip()) >= 2:
+            self.search_airports(new_q.strip())
+        else:
+            self._save_state()
+
+    def backspace_search_char(self):
+        """Удаляет последний символ из поисковой строки встроенной клавиатуры."""
+        cur = self.place_search_query or ""
+        if not cur:
+            return
+        new_q = cur[:-1]
+        self.place_search_query = new_q
+        if len(new_q.strip()) >= 2:
+            self.search_airports(new_q.strip())
+        else:
+            self.place_search_results = []
+            self._save_state()
+
     def status_summary(self):
         """Сводка состояния для отрисовки меню и табличного отчёта в Telegram."""
         dest_labels = [f"{self.city_name(c)} ({c})" for c in self.destinations]
@@ -235,6 +260,8 @@ class FlightMonitor:
             "destination_label": ", ".join(dest_labels),
             "origin_options": self.origin_options(),
             "destination_options": self.destination_options(),
+            "origin_groups": dict(getattr(flight_finder, "ORIGIN_GROUPS", {})),
+            "destination_groups": dict(getattr(flight_finder, "DESTINATION_GROUPS", {})),
             "place_search_query": self.place_search_query,
             "place_search_results": list(self.place_search_results),
             "depart_from": self.depart_from,

@@ -347,6 +347,20 @@ class Router:
             query = payload.split(":", 1)[1]
             self.flight_monitor.search_airports(query)
             target_menu = "flights_dest"
+        elif payload.startswith("kch:"):
+            parts = payload.split(":", 2)
+            if len(parts) == 3:
+                mode, ch = parts[1], parts[2]
+                self.flight_monitor.append_search_char(ch)
+                target_menu = "flights_origins" if mode == "orig" else "flights_dest"
+        elif payload.startswith("kbs:"):
+            mode = payload.split(":", 1)[1]
+            self.flight_monitor.backspace_search_char()
+            target_menu = "flights_origins" if mode == "orig" else "flights_dest"
+        elif payload.startswith("kclr:"):
+            mode = payload.split(":", 1)[1]
+            self.flight_monitor.clear_airport_search()
+            target_menu = "flights_origins" if mode == "orig" else "flights_dest"
         elif payload.startswith("transfers:"):
             try:
                 tr = int(payload.split(":", 1)[1])
