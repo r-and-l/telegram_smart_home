@@ -301,11 +301,21 @@ class TelegramAPI:
                 self._save_state()
                 self.pin_main_message()
 
-    def send_notification(self, text, inline_keyboard=None, parse_mode="html"):
+    def send_notification(self, text, inline_keyboard=None, parse_mode="html",
+                          rich_html=None, rich_blocks=None):
         """
-        Отправляет всплывающее уведомление. Возвращает message_id или None.
+        Отправляет всплывающее уведомление (поддерживает Rich HTML таблицы с fallback на sendMessage).
+        Возвращает message_id или None.
         """
         if self.bot_token and self.chat_id:
+            if rich_html or rich_blocks:
+                msg_id = self._send_rich_message(
+                    blocks=rich_blocks,
+                    inline_keyboard=inline_keyboard,
+                    rich_html=rich_html,
+                )
+                if msg_id:
+                    return msg_id
             payload = {"chat_id": self.chat_id, "text": text, "parse_mode": "HTML"}
             markup = self._build_inline_markup(inline_keyboard)
             if markup:

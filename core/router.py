@@ -282,7 +282,7 @@ class Router:
             target_menu = "flights_origins"
         elif payload.startswith("dest:"):
             code = payload.split(":", 1)[1]
-            self.flight_monitor.set_destination(code)
+            self.flight_monitor.toggle_destination(code)
             target_menu = "flights_dest"
         elif payload.startswith("from:"):
             try:

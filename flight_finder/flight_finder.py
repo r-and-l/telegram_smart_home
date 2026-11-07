@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-Поиск дешёвых авиабилетов через Aviasales (Travelpayouts) Data API.
+Поиск дешёвых авиабилетов через Aviasales (Travelpayouts) Data API
+с генерацией прямых ссылок на Aviasales и Trip.com.
 
 Установка:   pip install -r requirements.txt
 Токен:       бесплатно на https://www.travelpayouts.com (раздел «Инструменты» -> API)
 Запуск:      export TP_TOKEN="ваш_токен"
              python flight_finder.py
-             python flight_finder.py --origins GOJ MOW --destination BKK --depart-from 2027-02-01 --depart-to 2027-02-15
+             python flight_finder.py --origins GOJ MOW --destinations SGN DAD --depart-from 2027-01-25 --depart-to 2027-02-05
              python flight_finder.py --interactive
 Раз в N часов (cron):   0 */6 * * * TP_TOKEN=xxx python /путь/flight_finder.py
 
@@ -31,7 +32,8 @@ except ImportError:
 
 # ===================== НАСТРОЙКИ ПО УМОЛЧАНИЮ =====================
 ORIGINS = ["GOJ", "MOW"]          # GOJ = Нижний Новгород, MOW = все аэропорты Москвы
-DESTINATION = "SGN"               # Хошимин
+DESTINATION = "SGN"               # Хошимин (для обратной совместимости)
+DESTINATIONS = ["SGN", "DAD"]     # Хошимин, Дананг (поиск сразу в несколько направлений)
 
 DEPART_FROM = date(2027, 1, 25)   # окно вылета туда
 DEPART_TO = date(2027, 2, 5)
@@ -57,6 +59,7 @@ ORIGIN_AIRPORTS = {
 
 DESTINATION_AIRPORTS = {
     "SGN": "Хошимин",
+    "DAD": "Дананг",
     "CXR": "Нячанг",
     "HAN": "Ханой",
     "BKK": "Бангкок",
@@ -79,6 +82,26 @@ def city_label(iata: str) -> str:
     code = str(iata).upper().strip()
     name = ORIGIN_AIRPORTS.get(code) or DESTINATION_AIRPORTS.get(code)
     return f"{name} ({code})" if name else code
+
+
+def build_trip_link(
+    origin: str,
+    destination: str,
+    depart_dt_str: str,
+    return_dt_str: str,
+    currency: str = CURRENCY,
+) -> str:
+    """Формирует прямую ссылку на поиск этого же перелёта на ru.trip.com."""
+    dcity = str(origin).lower().strip()
+    acity = str(destination).lower().strip()
+    ddate = str(depart_dt_str)[:10]
+    rdate = str(return_dt_str)[:10]
+    curr = str(currency).upper().strip() or "RUB"
+    return (
+        f"https://ru.trip.com/flights/showfarefirst?"
+        f"dcity={dcity}&acity={acity}&ddate={ddate}&rdate={rdate}"
+        f"&triptype=rt&class=y&quantity=1&curr={curr}&locale=ru-RU"
+    )
 
 
 def _http_get_json(url: str, params: dict, timeout: int = 20) -> dict:
@@ -123,7 +146,7 @@ def fetch(
                 return []
             return data.get("data", [])
         except Exception as e:
-            print(f"[!] {origin} {depart_month}->{return_month}, попытка {attempt + 1}: {e}",
+            print(f"[!] {origin}->{destination} {depart_month}->{return_month}, попытка {attempt + 1}: {e}",
                   file=sys.stderr)
             time.sleep(2 * (attempt + 1))
     return []
@@ -153,7 +176,8 @@ def _as_date(val) -> date:
 def collect(
     token: str | None = None,
     origins: list[str] | None = None,
-    destination: str = DESTINATION,
+    destination: str | list[str] | None = None,
+    destinations: list[str] | None = None,
     depart_from: date | str = DEPART_FROM,
     depart_to: date | str = DEPART_TO,
     stay_min_days: int = STAY_MIN_DAYS,
@@ -165,7 +189,17 @@ def collect(
     delay: float = 0.3,
 ) -> list[dict]:
     active_origins = [o.upper().strip() for o in (origins if origins is not None else ORIGINS) if o]
-    dest_code = destination.upper().strip()
+
+    if destinations is not None:
+        raw_dests = destinations
+    elif isinstance(destination, (list, tuple)):
+        raw_dests = list(destination)
+    elif destination:
+        raw_dests = [destination]
+    else:
+        raw_dests = list(DESTINATIONS)
+    active_destinations = [str(d).upper().strip() for d in raw_dests if d and str(d).strip()]
+
     dep_from = _as_date(depart_from)
     dep_to = _as_date(depart_to)
     if dep_to < dep_from:
@@ -179,61 +213,65 @@ def collect(
 
     seen, results = set(), []
     for origin in active_origins:
-        for dm in depart_months:
-            for rm in return_months:
-                for t in fetch(
-                    origin,
-                    dm,
-                    rm,
-                    token=token,
-                    destination=dest_code,
-                    currency=currency,
-                ):
-                    try:
-                        dep = parse_dt(t["departure_at"])
-                        ret = parse_dt(t["return_at"])
-                    except (KeyError, ValueError):
-                        continue
+        for dest_code in active_destinations:
+            for dm in depart_months:
+                for rm in return_months:
+                    for t in fetch(
+                        origin,
+                        dm,
+                        rm,
+                        token=token,
+                        destination=dest_code,
+                        currency=currency,
+                    ):
+                        try:
+                            dep = parse_dt(t["departure_at"])
+                            ret = parse_dt(t["return_at"])
+                        except (KeyError, ValueError):
+                            continue
 
-                    stay = (ret.date() - dep.date()).days
-                    if not (dep_from <= dep.date() <= dep_to):
-                        continue
-                    if not (stay_min_days <= stay <= stay_max_days):
-                        continue
-                    if t.get("price", 10**9) > max_price:
-                        continue
+                        stay = (ret.date() - dep.date()).days
+                        if not (dep_from <= dep.date() <= dep_to):
+                            continue
+                        if not (stay_min_days <= stay <= stay_max_days):
+                            continue
+                        if t.get("price", 10**9) > max_price:
+                            continue
 
-                    transfers_to = t.get("transfers", 0)
-                    transfers_back = t.get("return_transfers", 0)
-                    if max(transfers_to, transfers_back) > max_transfers:
-                        continue
+                        transfers_to = t.get("transfers", 0)
+                        transfers_back = t.get("return_transfers", 0)
+                        if max(transfers_to, transfers_back) > max_transfers:
+                            continue
 
-                    dur_to = t.get("duration_to", 0) / 60   # минуты -> часы
-                    dur_back = t.get("duration_back", 0) / 60
-                    if max(dur_to, dur_back) > max_duration_hours:
-                        continue
+                        dur_to = t.get("duration_to", 0) / 60   # минуты -> часы
+                        dur_back = t.get("duration_back", 0) / 60
+                        if max(dur_to, dur_back) > max_duration_hours:
+                            continue
 
-                    key = (origin, t["departure_at"], t["return_at"], t["price"], t.get("airline"))
-                    if key in seen:
-                        continue
-                    seen.add(key)
+                        key = (origin, dest_code, t["departure_at"], t["return_at"], t["price"], t.get("airline"))
+                        if key in seen:
+                            continue
+                        seen.add(key)
 
-                    results.append({
-                        "origin": origin,
-                        "destination": dest_code,
-                        "price": t["price"],
-                        "airline": t.get("airline", ""),
-                        "depart": dep.strftime("%Y-%m-%d %H:%M"),
-                        "return": ret.strftime("%Y-%m-%d %H:%M"),
-                        "stay_days": stay,
-                        "transfers_to": transfers_to,
-                        "transfers_back": transfers_back,
-                        "hours_to": round(dur_to, 1),
-                        "hours_back": round(dur_back, 1),
-                        "link": "https://www.aviasales.ru" + t["link"] if t.get("link") else "",
-                    })
-                if delay > 0:
-                    time.sleep(delay)  # не долбим API
+                        dep_str = dep.strftime("%Y-%m-%d %H:%M")
+                        ret_str = ret.strftime("%Y-%m-%d %H:%M")
+                        results.append({
+                            "origin": origin,
+                            "destination": dest_code,
+                            "price": t["price"],
+                            "airline": t.get("airline", ""),
+                            "depart": dep_str,
+                            "return": ret_str,
+                            "stay_days": stay,
+                            "transfers_to": transfers_to,
+                            "transfers_back": transfers_back,
+                            "hours_to": round(dur_to, 1),
+                            "hours_back": round(dur_back, 1),
+                            "link": "https://www.aviasales.ru" + t["link"] if t.get("link") else "",
+                            "trip_link": build_trip_link(origin, dest_code, dep_str, ret_str, currency),
+                        })
+                    if delay > 0:
+                        time.sleep(delay)  # не долбим API
 
     # сортировка: сначала цена, при равной цене — меньше времени в пути
     results.sort(key=lambda x: (x["price"], x["hours_to"] + x["hours_back"]))
@@ -262,7 +300,9 @@ def print_table(rows: list[dict], top_n: int = TOP_N) -> None:
         print(f"{r['price']:>8} | {r['origin']:3} | {dest:4} | {r['airline']:9} | {r['depart']:16} | "
               f"{r['return']:16} | {r['stay_days']:>4} | "
               f"{r['transfers_to']}/{r['transfers_back']:<4} | {r['hours_to']}/{r['hours_back']}")
-    print("\nСсылка на лучший вариант:\n", rows[0]["link"])
+    print("\nСсылки на лучший вариант:")
+    print("  Aviasales:", rows[0].get("link", ""))
+    print("  Trip.com: ", rows[0].get("trip_link", ""))
 
 
 def notify_telegram(rows: list[dict], destination: str = DESTINATION) -> None:
@@ -274,7 +314,9 @@ def notify_telegram(rows: list[dict], destination: str = DESTINATION) -> None:
     text = (f"✈️ Лучший билет ({best['origin']} → {dest}): {best['price']} ₽\n"
             f"Авиакомпания: {best['airline']}\n"
             f"Туда: {best['depart']}\nОбратно: {best['return']} ({best['stay_days']} дн.)\n"
-            f"Пересадок: {best['transfers_to']}/{best['transfers_back']}\n{best['link']}")
+            f"Пересадок: {best['transfers_to']}/{best['transfers_back']}\n"
+            f"Aviasales: {best.get('link', '')}\n"
+            f"Trip.com: {best.get('trip_link', '')}")
     try:
         if requests is not None:
             requests.post(f"https://api.telegram.org/bot{bot}/sendMessage",
@@ -295,9 +337,9 @@ def _prompt_interactive(args):
         args.origins = [x.upper() for x in raw_origins.replace(",", " ").split() if x]
 
     print("Популярные направления:", ", ".join(f"{k} ({v})" for k, v in DESTINATION_AIRPORTS.items()))
-    raw_dest = input(f"Пункт назначения (IATA) [{args.destination}]: ").strip()
+    raw_dest = input(f"Пункты назначения через пробел [{' '.join(args.destinations)}]: ").strip()
     if raw_dest:
-        args.destination = raw_dest.upper()
+        args.destinations = [x.upper() for x in raw_dest.replace(",", " ").split() if x]
 
     raw_from = input(f"Вылет туда с (YYYY-MM-DD) [{args.depart_from}]: ").strip()
     if raw_from:
@@ -324,8 +366,9 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Поиск авиабилетов через Aviasales / Travelpayouts API")
     parser.add_argument("--origins", nargs="+", default=list(ORIGINS),
                         help="Коды IATA городов вылета (например: GOJ MOW LED)")
-    parser.add_argument("--destination", default=DESTINATION,
-                        help="Код IATA пункта назначения (например: SGN, BKK, HKT, DPS)")
+    parser.add_argument("--destinations", "--destination", nargs="+", dest="destinations",
+                        default=list(DESTINATIONS),
+                        help="Коды IATA пунктов назначения, можно несколько (например: SGN DAD CXR)")
     parser.add_argument("--depart-from", default=DEPART_FROM.isoformat(),
                         help="Начало окна вылета туда в формате YYYY-MM-DD")
     parser.add_argument("--depart-to", default=DEPART_TO.isoformat(),
@@ -360,7 +403,7 @@ def main(argv=None) -> None:
     rows = collect(
         token=args.token,
         origins=args.origins,
-        destination=args.destination,
+        destinations=args.destinations,
         depart_from=args.depart_from,
         depart_to=args.depart_to,
         stay_min_days=args.stay_min,
@@ -371,7 +414,7 @@ def main(argv=None) -> None:
     )
     print_table(rows, top_n=args.top_n)
     save_csv(rows)
-    notify_telegram(rows, destination=args.destination)
+    notify_telegram(rows, destination=",".join(args.destinations))
     if rows:
         print(f"\nВсе результаты сохранены в {CSV_FILE}")
 

@@ -5,12 +5,14 @@ from html import escape
 
 from config import FLIGHT_CONFIG
 from flight_finder import flight_finder
+from ui import rich_views
 
 
 class FlightMonitor:
     """
-    Сервис поиска авиабилетов (Aviasales / Travelpayouts) с настройкой маршрута,
-    дат, длительности, бюджета и ежедневного расписания из меню Telegram.
+    Сервис поиска авиабилетов (Aviasales / Travelpayouts + прямые ссылки на Trip.com)
+    с поддержкой нескольких городов вылета и назначения, настройкой дат, бюджета
+    и ежедневного расписания из меню Telegram.
     """
 
     _MIN_PRICE = 10000
@@ -37,9 +39,16 @@ class FlightMonitor:
         else:
             self.origins = default_origins
 
-        self.destination = str(
-            saved.get("destination") or FLIGHT_CONFIG.get("destination", "SGN")
-        ).upper().strip()
+        cfg_dests = FLIGHT_CONFIG.get("destinations") or (
+            [FLIGHT_CONFIG["destination"]] if FLIGHT_CONFIG.get("destination") else ["SGN", "DAD"]
+        )
+        saved_dests = saved.get("destinations")
+        if isinstance(saved_dests, list) and saved_dests:
+            self.destinations = [str(d).upper().strip() for d in saved_dests if d]
+        elif saved.get("destination"):
+            self.destinations = [str(saved["destination"]).upper().strip()]
+        else:
+            self.destinations = [str(d).upper().strip() for d in cfg_dests if d]
 
         self.depart_from = self._normalize_date(
             saved.get("depart_from") or FLIGHT_CONFIG.get("depart_from", "2027-01-25"),
@@ -72,6 +81,10 @@ class FlightMonitor:
         self.last_error = saved.get("last_error")
         self.last_daily_sent_date = saved.get("last_daily_sent_date")
 
+    @property
+    def destination(self):
+        return self.destinations[0] if self.destinations else "SGN"
+
     # ───────────── Персистентность и валидация ─────────────
 
     @staticmethod
@@ -98,6 +111,7 @@ class FlightMonitor:
     def _save_state(self):
         self.store.set("flight_monitor", {
             "origins": self.origins,
+            "destinations": self.destinations,
             "destination": self.destination,
             "depart_from": self.depart_from,
             "depart_to": self.depart_to,
@@ -135,7 +149,8 @@ class FlightMonitor:
         cfg_opts = FLIGHT_CONFIG.get("destination_options")
         if isinstance(cfg_opts, dict):
             opts.update(cfg_opts)
-        opts.setdefault(self.destination, self.destination)
+        for code in self.destinations:
+            opts.setdefault(code, code)
         return opts
 
     def city_name(self, code):
@@ -147,7 +162,8 @@ class FlightMonitor:
         )
 
     def status_summary(self):
-        """Сводка состояния для отрисовки меню в Telegram."""
+        """Сводка состояния для отрисовки меню и табличного отчёта в Telegram."""
+        dest_labels = [f"{self.city_name(c)} ({c})" for c in self.destinations]
         return {
             "enabled": self.enabled,
             "check_time": self.check_time,
@@ -155,8 +171,10 @@ class FlightMonitor:
             "default_max_price": int(FLIGHT_CONFIG.get("max_price", 60000)),
             "origins": list(self.origins),
             "origins_labels": [f"{self.city_name(c)} ({c})" for c in self.origins],
+            "destinations": list(self.destinations),
+            "destinations_labels": dest_labels,
             "destination": self.destination,
-            "destination_label": f"{self.city_name(self.destination)} ({self.destination})",
+            "destination_label": ", ".join(dest_labels),
             "origin_options": self.origin_options(),
             "destination_options": self.destination_options(),
             "depart_from": self.depart_from,
@@ -173,7 +191,7 @@ class FlightMonitor:
             "last_error": self.last_error,
         }
 
-    # ───────────── Настройка маршрута (Откуда / Куда) ─────────────
+    # ───────────── Настройка маршрута (Откуда / Куда — мультивыбор) ─────────────
 
     def toggle_origin(self, code):
         """Включает или выключает аэропорт вылета (оставляя минимум один выбранный)."""
@@ -195,13 +213,33 @@ class FlightMonitor:
             self._save_state()
             self.app.log(f"[FLIGHTS] Origins set to: {self.origins}")
 
+    def toggle_destination(self, code):
+        """Включает или выключает аэропорт назначения (оставляя минимум один выбранный)."""
+        code = str(code).upper().strip()
+        if not code:
+            return
+        if code in self.destinations:
+            if len(self.destinations) > 1:
+                self.destinations = [d for d in self.destinations if d != code]
+        else:
+            self.destinations.append(code)
+        self._save_state()
+        self.app.log(f"[FLIGHTS] Destinations updated: {self.destinations}")
+
+    def set_destinations(self, codes):
+        cleaned = [str(c).upper().strip() for c in codes if c and str(c).strip()]
+        if cleaned:
+            self.destinations = cleaned
+            self._save_state()
+            self.app.log(f"[FLIGHTS] Destinations set to: {self.destinations}")
+
     def set_destination(self, code):
         code = str(code).upper().strip()
         if not code:
             return
-        self.destination = code
+        self.destinations = [code]
         self._save_state()
-        self.app.log(f"[FLIGHTS] Destination set to: {self.destination}")
+        self.app.log(f"[FLIGHTS] Destination set to: {self.destinations}")
 
     # ───────────── Настройка дат и длительности ─────────────
 
@@ -289,7 +327,10 @@ class FlightMonitor:
 
     def reset_settings(self):
         self.origins = list(FLIGHT_CONFIG.get("origins", ["GOJ", "MOW"]))
-        self.destination = str(FLIGHT_CONFIG.get("destination", "SGN")).upper().strip()
+        cfg_dests = FLIGHT_CONFIG.get("destinations") or (
+            [FLIGHT_CONFIG["destination"]] if FLIGHT_CONFIG.get("destination") else ["SGN", "DAD"]
+        )
+        self.destinations = [str(d).upper().strip() for d in cfg_dests if d]
         self.depart_from = self._normalize_date(FLIGHT_CONFIG.get("depart_from", "2027-01-25"))
         self.depart_to = self._normalize_date(FLIGHT_CONFIG.get("depart_to", "2027-02-05"))
         self.stay_min_days = int(FLIGHT_CONFIG.get("stay_min_days", 27))
@@ -362,7 +403,7 @@ class FlightMonitor:
             rows = flight_finder.collect(
                 token=token,
                 origins=list(self.origins),
-                destination=self.destination,
+                destinations=list(self.destinations),
                 depart_from=self.depart_from,
                 depart_to=self.depart_to,
                 stay_min_days=self.stay_min_days,
@@ -373,6 +414,18 @@ class FlightMonitor:
                 currency=FLIGHT_CONFIG.get("currency", "rub"),
                 delay=0.15,
             )
+
+            # Гарантируем наличие trip_link для каждого результата
+            currency = FLIGHT_CONFIG.get("currency", "rub")
+            for r in rows:
+                if not r.get("trip_link"):
+                    r["trip_link"] = flight_finder.build_trip_link(
+                        r.get("origin", ""),
+                        r.get("destination", self.destination),
+                        r.get("depart", ""),
+                        r.get("return", ""),
+                        currency=currency,
+                    )
 
             csv_path = os.path.join(
                 os.path.dirname(os.path.dirname(__file__)),
@@ -393,8 +446,18 @@ class FlightMonitor:
             self.app.log(f"[FLIGHTS] Search complete: found {len(rows)} flights")
 
             if send_report:
-                report_text = self.format_report_message()
-                self.telegram.send_notification(report_text, parse_mode="html")
+                summary = self.status_summary()
+                report_text = self.format_report_message(summary)
+                report_rich_html = rich_views.render_flights_report_html(summary)
+                try:
+                    self.telegram.send_notification(
+                        report_text,
+                        parse_mode="html",
+                        rich_html=report_rich_html,
+                    )
+                except TypeError:
+                    # Для тестовых заглушек send_notification без rich_html
+                    self.telegram.send_notification(report_text, parse_mode="html")
 
             return rows
         except Exception as e:
@@ -416,17 +479,16 @@ class FlightMonitor:
                 except Exception:
                     pass
 
-    def format_report_message(self):
-        """Форматирует сообщение с результатами ежедневного/ручного поиска для Telegram."""
-        s = self.status_summary()
+    def format_report_message(self, summary=None):
+        """Форматирует табличный отчёт (fallback для обычного HTML с моноширинной таблицей и ссылками)."""
+        s = summary or self.status_summary()
         origins_str = ", ".join(s["origins"])
-        dest = s["destination"]
-        dest_label = s["destination_label"]
+        dests_str = ", ".join(s["destinations"])
         header = (
-            f"✈️ <b>Авиабилеты {escape(origins_str)} → {escape(dest_label)}</b>\n"
+            f"✈️ <b>Авиабилеты: {escape(origins_str)} → {escape(dests_str)}</b>\n"
             f"📅 Вылет: {escape(s['depart_from'])} — {escape(s['depart_to'])} "
-            f"({s['stay_min_days']}–{s['stay_max_days']} дн.)\n"
-            f"💰 Бюджет: до {s['max_price']:,} ₽".replace(",", " ")
+            f"({s['stay_min_days']}–{s['stay_max_days']} дн.) | "
+            f"💰 до {s['max_price']:,} ₽".replace(",", " ")
         )
 
         if not self.last_results:
@@ -436,20 +498,41 @@ class FlightMonitor:
                 "Попробуйте изменить даты или бюджет в меню «✈️ Билеты»."
             )
 
-        lines = [
-            header,
-            f"\nНайдено вариантов: <b>{self.last_total}</b>. Лучшие {len(self.last_results)}:\n",
+        table_lines = [
+            f"{'#':<2} {'Цена':>7} | {'Рейс':<7} | {'Туда':<10} | {'Обр.':<10} | {'Дн':>2} | {'Пер':<3}",
+            "-" * 54,
         ]
+        link_lines = []
+
         for idx, r in enumerate(self.last_results, start=1):
             price_fmt = f"{int(r['price']):,}".replace(",", " ")
-            r_dest = r.get("destination", dest)
-            link = r.get("link") or ""
-            link_html = f' · <a href="{escape(link)}">Открыть</a>' if link else ""
-            lines.append(
-                f"{idx}. <b>{price_fmt} ₽</b> | {escape(str(r['origin']))} → {escape(str(r_dest))} "
-                f"({escape(str(r.get('airline', '—')))})\n"
-                f"   🛫 {escape(str(r['depart']))} → 🛬 {escape(str(r['return']))} ({r['stay_days']} дн.)\n"
-                f"   🔄 Пересадок: {r['transfers_to']}/{r['transfers_back']} · "
-                f"⏱ В пути: {r['hours_to']}/{r['hours_back']} ч{link_html}"
+            r_dest = r.get("destination", self.destination)
+            route = f"{r['origin']}→{r_dest}"
+            dep_short = str(r.get("depart", ""))[:10]
+            ret_short = str(r.get("return", ""))[:10]
+            transfers = f"{r['transfers_to']}/{r['transfers_back']}"
+            table_lines.append(
+                f"{idx:<2} {price_fmt:>7} | {route:<7} | {dep_short:<10} | {ret_short:<10} | "
+                f"{r['stay_days']:>2} | {transfers:<3}"
             )
-        return "\n".join(lines)
+
+            links = []
+            if r.get("link"):
+                links.append(f'<a href="{escape(r["link"])}">Aviasales</a>')
+            if r.get("trip_link"):
+                links.append(f'<a href="{escape(r["trip_link"])}">Trip.com</a>')
+            if links:
+                link_lines.append(
+                    f"{idx}. <b>{price_fmt} ₽</b> ({escape(route)}, {escape(str(r.get('airline', '—')))}): "
+                    + " · ".join(links)
+                )
+
+        pre_block = "<pre>" + escape("\n".join(table_lines)) + "</pre>"
+        parts = [
+            header,
+            f"Найдено вариантов: <b>{self.last_total}</b> (показаны топ-{len(self.last_results)}):",
+            pre_block,
+        ]
+        if link_lines:
+            parts.append("🔗 <b>Ссылки для покупки:</b>\n" + "\n".join(link_lines))
+        return "\n\n".join(parts)

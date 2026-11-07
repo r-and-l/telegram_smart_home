@@ -59,8 +59,9 @@ class FakeTelegram:
     def render_message(self, **kwargs):
         self.rendered.append(kwargs)
 
-    def send_notification(self, text, inline_keyboard=None, parse_mode="html"):
-        self.notifications.append((text, inline_keyboard, parse_mode))
+    def send_notification(self, text, inline_keyboard=None, parse_mode="html",
+                          rich_html=None, rich_blocks=None):
+        self.notifications.append((text, inline_keyboard, parse_mode, rich_html))
         return len(self.notifications)
 
 
@@ -123,9 +124,13 @@ class TestFlightMonitor(unittest.TestCase):
         self.assertEqual(fm.last_total, 1)
         self.assertEqual(len(self.tg.notifications), 1)
         notif_text = self.tg.notifications[0][0]
-        self.assertIn("48 500 ₽", notif_text)
-        self.assertIn("MOW → SGN", notif_text)
-        self.assertIn("https://www.aviasales.ru/search/MOW2801SGN25021", notif_text)
+        notif_rich = self.tg.notifications[0][3]
+        self.assertIn("48 500", notif_text)
+        self.assertIn("<pre>", notif_text)
+        self.assertIn("Trip.com", notif_text)
+        self.assertIn("<table bordered striped compact>", notif_rich)
+        self.assertIn("Trip.com", notif_rich)
+        self.assertIn("https://www.aviasales.ru/search/MOW2801SGN25021", notif_rich)
 
     def test_router_opens_flights_menu_and_updates_time(self):
         lm = LightMonitor(self.app, self.tg, store=self.store)
@@ -155,10 +160,12 @@ class TestFlightMonitor(unittest.TestCase):
         router.inline_callback("telegram_callback", {"command": "/flights:origin:LED", "chat_id": 12345}, {})
         self.assertIn("LED", fm.origins)
 
-        # Переход в подменю назначения и выбор Бангкока (BKK)
+        # Переход в подменю назначения и мультивыбор (SGN, DAD + добавление BKK)
         router.inline_callback("telegram_callback", {"command": "/menu:flights_dest", "chat_id": 12345}, {})
         router.inline_callback("telegram_callback", {"command": "/flights:dest:BKK", "chat_id": 12345}, {})
-        self.assertEqual(fm.destination, "BKK")
+        self.assertIn("SGN", fm.destinations)
+        self.assertIn("DAD", fm.destinations)
+        self.assertIn("BKK", fm.destinations)
         self.assertIn("Бангкок (BKK)", self.tg.rendered[-1]["rich_html"])
 
         # Переход в подменю дат и сдвиг дат + выбор длительности
@@ -173,7 +180,7 @@ class TestFlightMonitor(unittest.TestCase):
         # Проверяем сохранение в Store
         fm_reloaded = FlightMonitor(self.app, self.tg, store=self.store)
         self.assertIn("LED", fm_reloaded.origins)
-        self.assertEqual(fm_reloaded.destination, "BKK")
+        self.assertEqual(fm_reloaded.destinations, ["SGN", "DAD", "BKK"])
         self.assertEqual(fm_reloaded.depart_from, "2027-02-01")
         self.assertEqual(fm_reloaded.depart_to, "2027-02-15")
         self.assertEqual((fm_reloaded.stay_min_days, fm_reloaded.stay_max_days), (12, 16))

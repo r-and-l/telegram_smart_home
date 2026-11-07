@@ -441,15 +441,18 @@ def build_ac_keyboard(entity_id, sub_menu=None, state="off"):
 def build_flights_rich_blocks(summary):
     """Строит rich-блоки и fallback-текст для меню поиска авиабилетов."""
     origins_str = ", ".join(summary["origins"])
-    dest = summary["destination"]
+    dests = summary.get("destinations") or [summary["destination"]]
+    dests_str = ", ".join(dests)
     enabled = summary["enabled"]
     check_time = summary["check_time"]
     price_fmt = f"{summary['max_price']:,}".replace(",", " ")
 
-    heading = f"✈️ Авиабилеты: {origins_str} → {dest}"
+    heading = f"✈️ Авиабилеты: {origins_str} → {dests_str}"
     schedule_str = f"🟢 Вкл (ежедневно в {check_time})" if enabled else "🔴 Выключен"
 
     param_rows = [
+        ["Откуда", ", ".join(summary.get("origins_labels", summary["origins"]))],
+        ["Куда", summary.get("destination_label", dests_str)],
         ["Окно вылета", f"{summary['depart_from']} — {summary['depart_to']}"],
         ["Длительность", f"{summary['stay_min_days']}–{summary['stay_max_days']} дн."],
         ["Бюджет", f"до {price_fmt} ₽"],
@@ -482,12 +485,17 @@ def build_flights_rich_blocks(summary):
         fallback_lines.append("\n<b>Лучшие варианты:</b>")
         for r in results:
             r_price = f"{int(r['price']):,} ₽".replace(",", " ")
-            route = f"{r['origin']}→{dest} ({r.get('airline', '—')})"
-            dates = f"{str(r['depart'])[:10]} – {str(r['return'])[:10]}"
+            r_dest = r.get("destination", dests[0])
+            route = f"{r['origin']}→{r_dest}"
+            airline = str(r.get("airline") or "—")
+            dep_str = str(r["depart"])[:16]
+            ret_str = str(r["return"])[:16]
             info = f"{r['stay_days']}д, пер.{r['transfers_to']}/{r['transfers_back']}"
-            flight_rows.append([r_price, route, dates, info])
-            fallback_lines.append(f"• {r_price} | {route} | {dates} ({info})")
-        blocks.append(build_rich_table_block(["Цена", "Рейс", "Даты", "Инфо"], flight_rows))
+            flight_rows.append([r_price, route, airline, dep_str, ret_str, info])
+            fallback_lines.append(f"• {r_price} | {route} ({airline}) | {dep_str} – {ret_str} ({info})")
+        blocks.append(
+            build_rich_table_block(["Цена", "Рейс", "А/к", "Туда", "Обратно", "Инфо"], flight_rows)
+        )
 
     return blocks, "\n".join(fallback_lines)
 
@@ -496,7 +504,8 @@ def build_flights_keyboard(summary, sub_menu=None):
     """Инлайн-клавиатура для меню поиска авиабилетов (основная и подменю)."""
     origins = summary["origins"]
     origins_str = ", ".join(origins)
-    dest = summary["destination"]
+    dests = summary.get("destinations") or [summary["destination"]]
+    dests_str = ", ".join(dests)
 
     if sub_menu == "origins":
         items = [
@@ -509,7 +518,7 @@ def build_flights_keyboard(summary, sub_menu=None):
 
     if sub_menu == "dest":
         items = [
-            (f"{'🟢' if code == dest else '✈️'} {city} ({code})", f"/flights:dest:{code}")
+            (f"{'🟢' if code in dests else '⚫'} {city} ({code})", f"/flights:dest:{code}")
             for code, city in summary.get("destination_options", {}).items()
         ]
         kb = build_keyboard(items, per_row=2)
@@ -570,7 +579,7 @@ def build_flights_keyboard(summary, sub_menu=None):
         [(search_label, "/flights:search")],
         [
             (f"🛫 Откуда ({origins_str}) ▸", "/menu:flights_origins"),
-            (f"🛬 Куда ({dest}) ▸", "/menu:flights_dest"),
+            (f"🛬 Куда ({dests_str}) ▸", "/menu:flights_dest"),
         ],
         [
             (f"📅 Даты ({summary['depart_from']} .. {summary['depart_to']}) ▸", "/menu:flights_dates"),

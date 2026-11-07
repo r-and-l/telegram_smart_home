@@ -428,26 +428,126 @@ def render_timer_edit_menu(name, entity, minutes, default_minutes, is_on):
 
 # ───────────── Авиабилеты (Flight Finder) ─────────────
 
+def _render_flights_results_table(results, default_dest="SGN"):
+    """Строит нативную HTML-таблицу найденных авиабилетов со ссылками на Aviasales и Trip.com."""
+    if not results:
+        return ""
+    lines = [
+        '<table bordered striped compact>',
+        (
+            "<tr>"
+            "<th>№</th>"
+            "<th>Цена</th>"
+            "<th>Рейс</th>"
+            "<th>А/к</th>"
+            "<th>Туда</th>"
+            "<th>Обратно</th>"
+            "<th>Дн.</th>"
+            "<th>Пер.</th>"
+            "<th>В пути</th>"
+            "<th>Купить</th>"
+            "</tr>"
+        ),
+    ]
+    for idx, r in enumerate(results, start=1):
+        r_price = f"{int(r['price']):,} ₽".replace(",", " ")
+        r_dest = r.get("destination", default_dest)
+        route_cell = f"{escape(str(r['origin']))} → {escape(str(r_dest))}"
+        airline_cell = escape(str(r.get("airline") or "—"))
+        dep_cell = escape(str(r.get("depart", ""))[:16])
+        ret_cell = escape(str(r.get("return", ""))[:16])
+        stay_cell = f"{r['stay_days']}"
+        tr_cell = f"{r['transfers_to']}/{r['transfers_back']}"
+        hrs_cell = f"{r['hours_to']}/{r['hours_back']}ч"
+
+        buy_links = []
+        if r.get("link"):
+            buy_links.append(f'<a href="{escape(r["link"])}">Aviasales</a>')
+        if r.get("trip_link"):
+            buy_links.append(f'<a href="{escape(r["trip_link"])}">Trip.com</a>')
+        buy_cell = " · ".join(buy_links) if buy_links else "—"
+
+        lines.append(
+            f"<tr>"
+            f'<td align="center">{idx}</td>'
+            f"<td><b>{r_price}</b></td>"
+            f"<td>{route_cell}</td>"
+            f'<td align="center">{airline_cell}</td>'
+            f"<td>{dep_cell}</td>"
+            f"<td>{ret_cell}</td>"
+            f'<td align="center">{stay_cell}</td>'
+            f'<td align="center">{tr_cell}</td>'
+            f'<td align="center">{hrs_cell}</td>'
+            f"<td>{buy_cell}</td>"
+            f"</tr>"
+        )
+    lines.append("</table>")
+    return "\n".join(lines)
+
+
+def render_flights_report_html(summary):
+    """Rich HTML таблица для ежедневного или ручного отчёта о найденных авиабилетах."""
+    origins_str = ", ".join(summary["origins"])
+    dests = summary.get("destinations") or [summary["destination"]]
+    dests_str = ", ".join(dests)
+    dest_label = summary.get("destination_label", dests_str)
+    price_fmt = f"{summary['max_price']:,}".replace(",", " ")
+
+    lines = [
+        f"<h3>✈️ Отчёт по билетам: {escape(origins_str)} → {escape(dest_label)}</h3>",
+        '<table bordered compact>',
+        f"<tr><td><b>Вылет туда</b></td><td>{escape(summary['depart_from'])} — {escape(summary['depart_to'])}</td></tr>",
+        f"<tr><td><b>Длительность</b></td><td>{summary['stay_min_days']}–{summary['stay_max_days']} дн.</td></tr>",
+        f"<tr><td><b>Бюджет</b></td><td>до {price_fmt} ₽ (пересадок ≤ {summary['max_transfers']})</td></tr>",
+        "</table>",
+    ]
+
+    results = summary.get("last_results") or []
+    if not results:
+        lines.append("<p>😔 <b>Под заданные условия билетов не найдено.</b></p>")
+    else:
+        lines.append(
+            f"<p>Найдено вариантов: <b>{summary['last_total']}</b> "
+            f"(лучшие {len(results)}):</p>"
+        )
+        lines.append(_render_flights_results_table(results, default_dest=dests[0]))
+
+    lines.append(_btn_row([
+        _btn("✈️ Открыть меню билетов", "/menu:flights", "primary"),
+    ], align="center"))
+    return "\n".join(lines)
+
+
 def render_flights_menu(summary, sub_menu=None):
     """Rich HTML для меню поиска авиабилетов (основной экран, выбор города вылета, назначения и дат)."""
     origins = summary["origins"]
     origins_str = ", ".join(origins)
-    dest = summary["destination"]
-    dest_label = summary.get("destination_label", dest)
+    dests = summary.get("destinations") or [summary["destination"]]
+    dests_str = ", ".join(dests)
+    dest_label = summary.get("destination_label", dests_str)
     enabled = summary["enabled"]
     check_time = summary["check_time"]
     max_price = summary["max_price"]
     price_fmt = f"{max_price:,}".replace(",", " ")
+    schedule_status = f"🟢 Вкл (каждый день в {escape(check_time)})" if enabled else "🔴 Выключен"
 
     lines = [
-        f"<h3>✈️ Авиабилеты: {escape(origins_str)} → {escape(dest_label)}</h3>",
+        f"<h3>✈️ Авиабилеты: {escape(origins_str)} → {escape(dests_str)}</h3>",
+        '<table bordered compact>',
+        f"<tr><td><b>🛫 Откуда</b></td><td>{escape(', '.join(summary.get('origins_labels', origins)))}</td></tr>",
+        f"<tr><td><b>🛬 Куда</b></td><td>{escape(dest_label)}</td></tr>",
         (
-            f"<p>📅 <b>Вылет:</b> {escape(summary['depart_from'])} — {escape(summary['depart_to'])} "
-            f"({summary['stay_min_days']}–{summary['stay_max_days']} дн.)<br>"
-            f"💰 <b>Бюджет:</b> до {price_fmt} ₽ | "
-            f"🔄 Пересадок: ≤ {summary['max_transfers']} | "
-            f"⏱ В пути: ≤ {summary['max_duration_hours']} ч</p>"
+            f"<tr><td><b>📅 Вылет туда</b></td>"
+            f"<td>{escape(summary['depart_from'])} — {escape(summary['depart_to'])} "
+            f"({summary['stay_min_days']}–{summary['stay_max_days']} дн.)</td></tr>"
         ),
+        (
+            f"<tr><td><b>💰 Фильтры</b></td>"
+            f"<td>до {price_fmt} ₽ · пересадок ≤ {summary['max_transfers']} · "
+            f"в пути ≤ {summary['max_duration_hours']} ч</td></tr>"
+        ),
+        f"<tr><td><b>⏰ Автопоиск</b></td><td>{schedule_status}</td></tr>",
+        "</table>",
     ]
 
     # ─── Подменю выбора городов отправления ───
@@ -470,16 +570,16 @@ def render_flights_menu(summary, sub_menu=None):
         ], align="center"))
         return "\n".join(lines)
 
-    # ─── Подменю выбора пункта назначения ───
+    # ─── Подменю выбора пунктов назначения (мультивыбор 2 и более) ───
     if sub_menu == "dest":
-        lines.append("<h4>🛬 Пункт назначения</h4>")
+        lines.append("<h4>🛬 Пункты назначения (можно выбрать 2 и более)</h4>")
         dest_opts = list(summary.get("destination_options", {}).items())
         for i in range(0, len(dest_opts), 2):
             pair = dest_opts[i:i + 2]
             row_btns = []
             for code, city_name in pair:
-                active = code == dest
-                icon = "🟢" if active else "✈️"
+                active = code in dests
+                icon = "🟢" if active else "⚫"
                 style = "success" if active else None
                 row_btns.append(_btn(f"{icon} {city_name} ({code})", f"/flights:dest:{code}", style))
             lines.append(_btn_row(row_btns, align="center"))
@@ -559,9 +659,6 @@ def render_flights_menu(summary, sub_menu=None):
         return "\n".join(lines)
 
     # ─── Основной экран ───
-    schedule_status = f"🟢 Вкл (каждый день в {escape(check_time)})" if enabled else "🔴 Выключен"
-    lines.append(f"<p>⏰ <b>Автопоиск:</b> {schedule_status}</p>")
-
     if not summary["has_token"]:
         lines.append(
             "<p>⚠️ <b>Токен не задан:</b> укажите <code>tp_token</code> в "
@@ -580,22 +677,7 @@ def render_flights_menu(summary, sub_menu=None):
 
     results = summary.get("last_results") or []
     if results:
-        lines.append('<table bordered striped compact>')
-        lines.append("<tr><th>Цена</th><th>Рейс</th><th>Туда / Обратно</th><th>Инфо</th></tr>")
-        for r in results:
-            r_price = f"{int(r['price']):,} ₽".replace(",", " ")
-            r_dest = r.get("destination", dest)
-            route_cell = f"{escape(str(r['origin']))}→{escape(str(r_dest))} ({escape(str(r.get('airline', '—')))})"
-            dates_cell = f"{escape(str(r['depart'])[:10])} – {escape(str(r['return'])[:10])}"
-            info_cell = (
-                f"{r['stay_days']}д, пер.{r['transfers_to']}/{r['transfers_back']}, "
-                f"{r['hours_to']}/{r['hours_back']}ч"
-            )
-            lines.append(
-                f"<tr><td><b>{r_price}</b></td><td>{route_cell}</td>"
-                f"<td>{dates_cell}</td><td>{info_cell}</td></tr>"
-            )
-        lines.append("</table>")
+        lines.append(_render_flights_results_table(results, default_dest=dests[0]))
 
     # Кнопка немедленного запуска поиска
     search_label = "⏳ Поиск..." if summary["is_searching"] else "🔍 Найти сейчас и прислать отчёт"
@@ -606,7 +688,7 @@ def render_flights_menu(summary, sub_menu=None):
     # Кнопки перехода к настройке маршрута и дат
     lines.append(_btn_row([
         _btn(f"🛫 Откуда ({origins_str}) ▸", "/menu:flights_origins"),
-        _btn(f"🛬 Куда ({dest}) ▸", "/menu:flights_dest"),
+        _btn(f"🛬 Куда ({dests_str}) ▸", "/menu:flights_dest"),
     ], align="center"))
     lines.append(_btn_row([
         _btn(f"📅 Даты и дни ({summary['depart_from']} .. {summary['depart_to']}) ▸", "/menu:flights_dates"),
