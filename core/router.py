@@ -369,6 +369,20 @@ class Router:
             val = payload.split(":", 1)[1]
             self.flight_monitor.set_one_way(val in ("1", "true", "True"))
             target_menu = "flights_dates"
+        elif payload.startswith("cal_nav:"):
+            try:
+                delta_m = int(payload.split(":", 1)[1])
+                self.flight_monitor.shift_calendar_month(delta_m)
+            except ValueError:
+                return
+            target_menu = "flights_dates"
+        elif payload.startswith("cal_day:"):
+            iso_d = payload.split(":", 1)[1]
+            self.flight_monitor.pick_calendar_date(iso_d)
+            target_menu = "flights_dates"
+        elif payload == "cal_whole":
+            self.flight_monitor.select_whole_calendar_month()
+            target_menu = "flights_dates"
         elif payload.startswith("transfers:"):
             try:
                 tr = int(payload.split(":", 1)[1])

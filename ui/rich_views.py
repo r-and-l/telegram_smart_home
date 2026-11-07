@@ -688,15 +688,95 @@ def render_flights_menu(summary, sub_menu=None):
         ], align="center"))
         return "\n".join(lines)
 
-    # ─── Подменю выбора дат и длительности ───
+    # ─── Подменю выбора дат и длительности (встроенный интерактивный календарь) ───
     if sub_menu == "dates":
+        import calendar
+        from datetime import date as _date
+
         lines.append("<h4>✈️ Тип маршрута</h4>")
         lines.append(_btn_row([
             _btn("🔄 Туда-обратно", "/flights:one_way_dates:0", "primary" if not is_one_way else None),
             _btn("➡️ Только в одну сторону", "/flights:one_way_dates:1", "primary" if is_one_way else None),
         ], align="center"))
 
-        lines.append("<h4>📅 Начало окна вылета туда</h4>")
+        dep_from_str = summary["depart_from"]
+        dep_to_str = summary["depart_to"]
+        d_from_obj = _date.fromisoformat(dep_from_str)
+        cal_year = int(summary.get("cal_year") or d_from_obj.year)
+        cal_month = int(summary.get("cal_month") or d_from_obj.month)
+        pick_step = summary.get("cal_pick_step") or "from"
+
+        month_names_ru = {
+            1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель",
+            5: "Май", 6: "Июнь", 7: "Июль", 8: "Август",
+            9: "Сентябрь", 10: "Октябрь", 11: "Ноябрь", 12: "Декабрь",
+        }
+        month_title = f"{month_names_ru.get(cal_month, cal_month)} {cal_year}"
+
+        lines.append(f"<h4>🗓 Календарь вылета: {escape(dep_from_str)} — {escape(dep_to_str)}</h4>")
+        if pick_step == "to":
+            lines.append(
+                f"<p>🔵 Выбрано начало <b>{escape(dep_from_str)}</b>. "
+                "Нажмите <b>вторую дату</b> для конца диапазона (или оставьте как есть для вылета ровно в этот день):</p>"
+            )
+        else:
+            lines.append(
+                "<p>🟢 Нажмите на <b>первую дату</b> вылета в календаре "
+                "(1 клик — точная дата, 2 клика — диапазон «с … по …»):</p>"
+            )
+
+        # Шапка календаря: переключение месяца
+        lines.append(_btn_row([
+            _btn("◀️ Пред.", "/flights:cal_nav:-1"),
+            _btn_disabled(f"🗓 {month_title}"),
+            _btn("След. ▶️", "/flights:cal_nav:1"),
+            _btn("Весь мес.", "/flights:cal_whole"),
+        ], align="center"))
+
+        # Заголовки дней недели
+        lines.append(_btn_row([
+            _btn_disabled(wd) for wd in ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
+        ], align="center"))
+
+        # Сетка дней месяца
+        cal_matrix = calendar.Calendar(firstweekday=0).monthdayscalendar(cal_year, cal_month)
+        for week in cal_matrix:
+            week_btns = []
+            for day_num in week:
+                if day_num == 0:
+                    week_btns.append(_btn_disabled("·"))
+                else:
+                    iso_d = f"{cal_year:04d}-{cal_month:02d}-{day_num:02d}"
+                    if iso_d == dep_from_str and iso_d == dep_to_str:
+                        style = "success"
+                        lbl = f"[{day_num}]"
+                    elif iso_d == dep_from_str:
+                        style = "success"
+                        lbl = f"[{day_num}▸"
+                    elif iso_d == dep_to_str:
+                        style = "success"
+                        lbl = f"◂{day_num}]"
+                    elif dep_from_str < iso_d < dep_to_str:
+                        style = "primary"
+                        lbl = f"{day_num}"
+                    else:
+                        style = None
+                        lbl = f"{day_num}"
+                    week_btns.append(_btn(lbl, f"/flights:cal_day:{iso_d}", style))
+            lines.append(_btn_row(week_btns, align="center"))
+
+        # Быстрые кнопки ширины окна от выбранной даты
+        lines.append(_btn_row([
+            _btn("Точно 1 дн", "/flights:span:0"),
+            _btn("+3 дн", "/flights:span:3"),
+            _btn("Окно 7д", "/flights:span:7"),
+            _btn("Окно 14д", "/flights:span:14"),
+            _btn("Окно 30д", "/flights:span:30"),
+        ], align="center"))
+
+        # Дополнительный спойлер для точного сдвига кнопками ±1/±7/±30 дней
+        lines.append("<details>")
+        lines.append("<summary>⚙️ <b>Точный сдвиг дат кнопками (±1, ±7, ±30 дн.)</b></summary>")
         lines.append(_btn_row([
             _btn("⏪ -30д", "/flights:from:-30"),
             _btn("◀️ -7д", "/flights:from:-7"),
@@ -706,8 +786,6 @@ def render_flights_menu(summary, sub_menu=None):
             _btn("▶️ +7д", "/flights:from:7"),
             _btn("⏩ +30д", "/flights:from:30"),
         ], align="center"))
-
-        lines.append("<h4>📅 Конец окна вылета туда</h4>")
         lines.append(_btn_row([
             _btn("◀️ -7д", "/flights:to:-7"),
             _btn("-1д", "/flights:to:-1"),
@@ -715,21 +793,13 @@ def render_flights_menu(summary, sub_menu=None):
             _btn("+1д", "/flights:to:1"),
             _btn("▶️ +7д", "/flights:to:7"),
         ], align="center"))
-
-        lines.append(_btn_row([
-            _btn("Окно 7д", "/flights:span:7"),
-            _btn("Окно 11д", "/flights:span:11"),
-            _btn("Окно 14д", "/flights:span:14"),
-            _btn("Окно 30д", "/flights:span:30"),
-        ], align="center"))
-
-        lines.append("<h4>🔄 Сдвинуть всё окно вылета</h4>")
         lines.append(_btn_row([
             _btn("⏪ -1 мес", "/flights:win:-30"),
             _btn("◀️ -7 дн", "/flights:win:-7"),
             _btn("▶️ +7 дн", "/flights:win:7"),
             _btn("⏩ +1 мес", "/flights:win:30"),
         ], align="center"))
+        lines.append("</details>")
 
         if is_one_way:
             lines.append("<p>➡️ <i>Выбран поиск только в одну сторону — обратный вылет и длительность пребывания не учитываются.</i></p>")

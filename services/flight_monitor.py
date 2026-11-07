@@ -73,6 +73,15 @@ class FlightMonitor:
         if self.depart_to < self.depart_from:
             self.depart_to = self.depart_from
 
+        d_init = date.fromisoformat(self.depart_from)
+        self.cal_year = int(saved.get("cal_year") or d_init.year)
+        self.cal_month = max(1, min(12, int(saved.get("cal_month") or d_init.month)))
+        self.cal_pick_step = (
+            saved.get("cal_pick_step")
+            if saved.get("cal_pick_step") in ("from", "to")
+            else "from"
+        )
+
         self.stay_min_days = max(
             self._MIN_STAY,
             int(saved.get("stay_min_days") or FLIGHT_CONFIG.get("stay_min_days", 27)),
@@ -145,6 +154,9 @@ class FlightMonitor:
             "place_search_results": self.place_search_results,
             "depart_from": self.depart_from,
             "depart_to": self.depart_to,
+            "cal_year": self.cal_year,
+            "cal_month": self.cal_month,
+            "cal_pick_step": self.cal_pick_step,
             "stay_min_days": self.stay_min_days,
             "stay_max_days": self.stay_max_days,
             "one_way": self.one_way,
@@ -268,6 +280,9 @@ class FlightMonitor:
             "place_search_results": list(self.place_search_results),
             "depart_from": self.depart_from,
             "depart_to": self.depart_to,
+            "cal_year": self.cal_year,
+            "cal_month": self.cal_month,
+            "cal_pick_step": self.cal_pick_step,
             "stay_min_days": self.stay_min_days,
             "stay_max_days": self.stay_max_days,
             "one_way": self.one_way,
@@ -332,7 +347,69 @@ class FlightMonitor:
         self._save_state()
         self.app.log(f"[FLIGHTS] Destination set to: {self.destinations}")
 
-    # ───────────── Настройка дат, длительности и пересадок ─────────────
+    # ───────────── Настройка дат (интерактивный календарь), длительности и пересадок ─────────────
+
+    def shift_calendar_month(self, delta_months):
+        """Листает отображаемый месяц календаря вперёд или назад."""
+        total_months = (self.cal_year * 12 + (self.cal_month - 1)) + int(delta_months)
+        self.cal_year = max(2025, min(2035, total_months // 12))
+        self.cal_month = (total_months % 12) + 1
+        self._save_state()
+
+    def set_calendar_month(self, year, month):
+        """Переключает календарь на указанный год и месяц."""
+        self.cal_year = max(2025, min(2035, int(year)))
+        self.cal_month = max(1, min(12, int(month)))
+        self._save_state()
+
+    def set_calendar_pick_step(self, step):
+        if step in ("from", "to"):
+            self.cal_pick_step = step
+            self._save_state()
+
+    def pick_calendar_date(self, iso_date_str):
+        """
+        Обрабатывает нажатие на день в календаре:
+        - 1-е нажатие (step='from') выбирает дату начала (и сразу ставит конец = началу для точной даты),
+          переключая режим на выбор конца диапазона ('to').
+        - 2-е нажатие (step='to') задаёт конец окна вылета (если нажата дата раньше начала — меняет их местами)
+          и возвращает режим на 'from'.
+        """
+        try:
+            picked = date.fromisoformat(str(iso_date_str).strip())
+        except Exception:
+            return
+        self.cal_year = picked.year
+        self.cal_month = picked.month
+
+        if self.cal_pick_step == "from":
+            self.depart_from = picked.isoformat()
+            self.depart_to = picked.isoformat()
+            self.cal_pick_step = "to"
+        else:
+            d_from = date.fromisoformat(self.depart_from)
+            if picked < d_from:
+                self.depart_from = picked.isoformat()
+                self.depart_to = d_from.isoformat()
+            else:
+                self.depart_to = picked.isoformat()
+            self.cal_pick_step = "from"
+
+        self._save_state()
+        self.app.log(
+            f"[FLIGHTS] Calendar date picked ({iso_date_str}): "
+            f"{self.depart_from} .. {self.depart_to} (next step: {self.cal_pick_step})"
+        )
+
+    def select_whole_calendar_month(self):
+        """Выбирает весь текущий месяц календаря как окно вылета."""
+        import calendar
+        _, last_day = calendar.monthrange(self.cal_year, self.cal_month)
+        self.depart_from = date(self.cal_year, self.cal_month, 1).isoformat()
+        self.depart_to = date(self.cal_year, self.cal_month, last_day).isoformat()
+        self.cal_pick_step = "from"
+        self._save_state()
+        self.app.log(f"[FLIGHTS] Selected whole month: {self.depart_from} .. {self.depart_to}")
 
     def shift_depart_from(self, delta_days):
         d_from = date.fromisoformat(self.depart_from) + timedelta(days=int(delta_days))
@@ -341,6 +418,8 @@ class FlightMonitor:
             d_to = d_from
         self.depart_from = d_from.isoformat()
         self.depart_to = d_to.isoformat()
+        self.cal_year = d_from.year
+        self.cal_month = d_from.month
         self._save_state()
         self.app.log(f"[FLIGHTS] Departure window updated: {self.depart_from} .. {self.depart_to}")
 
@@ -444,6 +523,10 @@ class FlightMonitor:
         self.place_search_results = []
         self.depart_from = self._normalize_date(FLIGHT_CONFIG.get("depart_from", "2027-01-25"))
         self.depart_to = self._normalize_date(FLIGHT_CONFIG.get("depart_to", "2027-02-05"))
+        d_init = date.fromisoformat(self.depart_from)
+        self.cal_year = d_init.year
+        self.cal_month = d_init.month
+        self.cal_pick_step = "from"
         self.stay_min_days = int(FLIGHT_CONFIG.get("stay_min_days", 27))
         self.stay_max_days = int(FLIGHT_CONFIG.get("stay_max_days", 33))
         self.one_way = bool(FLIGHT_CONFIG.get("one_way", False))

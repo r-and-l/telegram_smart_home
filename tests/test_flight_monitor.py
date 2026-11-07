@@ -332,6 +332,36 @@ class TestFlightMonitor(unittest.TestCase):
         self.assertIn("только туда", menu_html)
         self.assertIn("triptype=ow", menu_html)
 
+    def test_interactive_calendar_date_and_range_selection(self):
+        from ui.rich_views import render_flights_menu
+
+        fm = FlightMonitor(self.app, self.tg, store=self.store)
+        fm.set_calendar_month(2027, 2)
+
+        # Проверяем рендер сетки календаря Февраль 2027
+        dates_html = render_flights_menu(fm.status_summary(), sub_menu="dates")
+        self.assertIn("Февраль 2027", dates_html)
+        self.assertIn("/flights:cal_day:2027-02-10", dates_html)
+        self.assertIn("/flights:cal_nav:-1", dates_html)
+        self.assertIn("/flights:cal_nav:1", dates_html)
+
+        # 1-й клик по дате: выбирает точную дату (начало == конец) и ждёт вторую дату
+        fm.pick_calendar_date("2027-02-10")
+        self.assertEqual(fm.depart_from, "2027-02-10")
+        self.assertEqual(fm.depart_to, "2027-02-10")
+        self.assertEqual(fm.cal_pick_step, "to")
+
+        # 2-й клик по дате: задаёт конец диапазона и сбрасывает шаг обратно на 'from'
+        fm.pick_calendar_date("2027-02-20")
+        self.assertEqual(fm.depart_from, "2027-02-10")
+        self.assertEqual(fm.depart_to, "2027-02-20")
+        self.assertEqual(fm.cal_pick_step, "from")
+
+        # Выбор всего месяца одной кнопкой
+        fm.select_whole_calendar_month()
+        self.assertEqual(fm.depart_from, "2027-02-01")
+        self.assertEqual(fm.depart_to, "2027-02-28")
+
 
 if __name__ == "__main__":
     unittest.main()
