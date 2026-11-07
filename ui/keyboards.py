@@ -21,6 +21,7 @@ def _get_main_menu_keyboard():
         buttons.append(("❄️ Кондей", f"/menu:ac:{ac_device['entity']}"))
 
     buttons.append(("⏱ Таймеры", "/menu:timers"))
+    buttons.append(("✈️ Билеты", "/menu:flights"))
     buttons.append(("🌙 Ночной режим", "/night_mode"))
 
     return build_inline_keyboard(buttons, per_row=2)

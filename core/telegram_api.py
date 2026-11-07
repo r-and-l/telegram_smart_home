@@ -1,133 +1,10 @@
-import http.client
-import io
 import json
-import socket
-import ssl
-import threading
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 from config import TELEGRAM_CONFIG
 from core.store import Store
-from core.route_optimizer import Route, RouteOptimizer
 
-# Принудительно используем IPv4 для Telegram, т.к. на многих роутерах (включая OpenWrt с туннелями)
-# IPv6 локально включён, но туннели к Telegram не имеют связности по IPv6, из-за чего рукопожатие зависает.
-# Оригинальный getaddrinfo сохраняем прямо в модуле socket, чтобы importlib.reload(core.telegram_api)
-# в app.py никогда не оборачивал обёртку саму в себя (иначе возникает RecursionError).
-if not hasattr(socket, "_orig_getaddrinfo"):
-    socket._orig_getaddrinfo = socket.getaddrinfo
-
-
-def _telegram_ipv4_getaddrinfo(host, port, family=0, *args, **kwargs):
-    if host and "telegram.org" in str(host):
-        family = socket.AF_INET
-    return socket._orig_getaddrinfo(host, port, family, *args, **kwargs)
-
-
-socket.getaddrinfo = _telegram_ipv4_getaddrinfo
-
-
-class _KeepAliveResponse:
-    """Ответ с контекстным менеджером, совместимый с urllib.request.urlopen."""
-
-    def __init__(self, body, status, headers, url):
-        self._body = body
-        self.status = status
-        self.code = status
-        self.headers = headers
-        self.url = url
-
-    def read(self):
-        return self._body
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        return False
-
-
-class KeepAliveOpener:
-    """
-    Обёртка с интерфейсом urllib OpenerDirector (.open(req, timeout=...)),
-    переиспользующая постоянное TLS-соединение (HTTP/1.1 Keep-Alive) к api.telegram.org.
-    Убирает лишние TLS-рукопожатия на каждый клик (снижая пинг с ~400мс до ~55мс)
-    и прозрачно переподключается при закрытии неактивного сокета сервером.
-    """
-
-    def __init__(self):
-        self._lock = threading.Lock()
-        self._conn = None
-        self._host = None
-        self._ssl_ctx = ssl.create_default_context()
-
-    def _close_conn(self):
-        if self._conn is not None:
-            try:
-                self._conn.close()
-            except Exception:
-                pass
-            self._conn = None
-
-    def open(self, fullurl, data=None, timeout=5):
-        if isinstance(fullurl, urllib.request.Request):
-            url = fullurl.full_url
-            req_data = fullurl.data if data is None else data
-            headers = dict(fullurl.header_items())
-            method = fullurl.get_method()
-        else:
-            url = str(fullurl)
-            req_data = data
-            headers = {}
-            method = "POST" if req_data is not None else "GET"
-
-        parsed = urllib.parse.urlsplit(url)
-        host = parsed.hostname or "api.telegram.org"
-        port = parsed.port or (443 if parsed.scheme == "https" else 80)
-        path = parsed.path or "/"
-        if parsed.query:
-            path = f"{path}?{parsed.query}"
-
-        headers["Connection"] = "keep-alive"
-        if req_data is not None:
-            headers["Content-Length"] = str(len(req_data))
-
-        with self._lock:
-            last_exc = None
-            for attempt in range(2):
-                try:
-                    if self._conn is None or self._host != (host, port):
-                        self._close_conn()
-                        self._conn = http.client.HTTPSConnection(
-                            host, port, timeout=timeout, context=self._ssl_ctx
-                        )
-                        self._host = (host, port)
-                    else:
-                        self._conn.timeout = timeout
-                        if self._conn.sock is not None:
-                            self._conn.sock.settimeout(timeout)
-
-                    self._conn.request(method, path, body=req_data, headers=headers)
-                    resp = self._conn.getresponse()
-                    body = resp.read()
-                    status = resp.status
-                    reason = resp.reason
-
-                    if status >= 400:
-                        raise urllib.error.HTTPError(
-                            url, status, reason, resp.headers, io.BytesIO(body)
-                        )
-                    return _KeepAliveResponse(body, status, resp.headers, url)
-                except urllib.error.HTTPError:
-                    raise
-                except Exception as e:
-                    last_exc = e
-                    self._close_conn()
-                    if attempt == 0:
-                        continue
-            raise urllib.error.URLError(last_exc)
 
 class TelegramAPI:
     def __init__(self, app, store=None):
@@ -138,14 +15,12 @@ class TelegramAPI:
         self.bot_token = TELEGRAM_CONFIG.get("bot_token")
         self.last_text = None
         self.last_keyboard = None
-        self._active_route_label = None
+        self._opener = self._build_opener()
 
-        routes = self._build_routes()
-        self.route_optimizer = RouteOptimizer(routes, app=self.app)
-
-        self.app.log(f"TelegramAPI initialized: bot_token={'SET' if self.bot_token else 'NOT SET'}, "
-                     f"chat_id={self.chat_id}, main_message_id={self.main_message_id}, "
-                     f"routes={len(routes)}")
+        self.app.log(
+            f"TelegramAPI initialized: bot_token={'SET' if self.bot_token else 'NOT SET'}, "
+            f"chat_id={self.chat_id}, main_message_id={self.main_message_id}"
+        )
 
     # ───────────── Персистентное состояние ─────────────
 
@@ -168,137 +43,80 @@ class TelegramAPI:
 
     # ───────────── Прямые вызовы Telegram Bot API (Rich Tables) ─────────────
 
-    def _build_routes(self):
-        """
-        Создаёт список объектов Route из конфига.
-        Поддерживает: список прокси (или одну строку), с/без аутентификации.
-        Форматы прокси:
-          "socks5://host:port"
-          "socks5://user:pass@host:port"
-        Прямое подключение (без прокси) всегда добавляется последним как fallback.
-        """
-        routes = []
+    def _build_opener(self):
+        """Создаёт urllib opener: прямое подключение или через прокси из TELEGRAM_CONFIG."""
+        proxy = TELEGRAM_CONFIG.get("proxy")
+        if isinstance(proxy, list):
+            proxy = proxy[0] if proxy else None
 
-        proxy_cfg = TELEGRAM_CONFIG.get("proxy")
-        if proxy_cfg:
-            proxies = proxy_cfg if isinstance(proxy_cfg, list) else [proxy_cfg]
-        else:
-            proxies = []
+        if not proxy or not isinstance(proxy, str):
+            return urllib.request.build_opener()
 
-        socks_mod = None
-        handler_cls = None
+        if proxy.startswith("http://") or proxy.startswith("https://"):
+            self.app.log(f"[PROXY] Using HTTP proxy: {proxy}")
+            return urllib.request.build_opener(
+                urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+            )
 
-        for proxy in proxies:
-            if not proxy or not isinstance(proxy, str):
-                continue
+        if proxy.startswith("socks5://") or proxy.startswith("socks5h://"):
+            try:
+                import socks
+                from sockshandler import SocksiPyHandler
+            except ImportError:
+                self.app.log("[SETUP] Installing PySocks for proxy...")
+                import subprocess
+                subprocess.check_call(["pip", "install", "-q", "PySocks"])
+                import socks
+                from sockshandler import SocksiPyHandler
 
-            # 1. HTTP / HTTPS прокси (urllib поддерживает нативно)
-            if proxy.startswith("http://") or proxy.startswith("https://"):
-                opener = urllib.request.build_opener(
-                    urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+            use_remote_dns = proxy.startswith("socks5h://")
+            clean_addr = proxy.replace("socks5h://", "").replace("socks5://", "")
+            username = password = None
+            if "@" in clean_addr:
+                creds, clean_addr = clean_addr.rsplit("@", 1)
+                if ":" in creds:
+                    username, password = creds.split(":", 1)
+            host, port = clean_addr.split(":")
+            self.app.log(f"[PROXY] Using SOCKS5 proxy: {host}:{port}")
+            return urllib.request.build_opener(
+                SocksiPyHandler(
+                    socks.SOCKS5,
+                    host,
+                    int(port),
+                    rdns=use_remote_dns,
+                    username=username,
+                    password=password,
                 )
-                route = Route(index=len(routes), opener=opener, label=proxy)
-                routes.append(route)
-                self.app.log(f"[PROXY] #{len(routes)}: {proxy} (HTTP)")
-                continue
+            )
 
-            # 2. SOCKS5 прокси
-            if proxy.startswith("socks5://") or proxy.startswith("socks5h://"):
-                # Lazy import + auto-install PySocks
-                if socks_mod is None:
-                    try:
-                        import socks as _s
-                        from sockshandler import SocksiPyHandler as _h
-                    except ImportError:
-                        self.app.log("[SETUP] Installing PySocks for proxy...")
-                        import subprocess
-                        subprocess.check_call(["pip", "install", "-q", "PySocks"])
-                        import socks as _s
-                        from sockshandler import SocksiPyHandler as _h
-                    socks_mod, handler_cls = _s, _h
-
-                # socks5h:// — резолв DNS на стороне прокси (rdns=True)
-                # socks5:// — локальный резолв DNS (rdns=False, решает проблему зависания DNS на роутере)
-                use_remote_dns = proxy.startswith("socks5h://")
-                clean_addr = proxy.replace("socks5h://", "").replace("socks5://", "")
-
-                username = password = None
-                if "@" in clean_addr:
-                    creds, clean_addr = clean_addr.rsplit("@", 1)
-                    if ":" in creds:
-                        username, password = creds.split(":", 1)
-                host, port = clean_addr.split(":")
-
-                opener = urllib.request.build_opener(
-                    handler_cls(socks_mod.SOCKS5, host, int(port),
-                                rdns=use_remote_dns,
-                                username=username, password=password)
-                )
-                dns_info = "remote-dns" if use_remote_dns else "local-dns"
-                auth_info = ", auth" if username else ""
-                label = f"socks5://{host}:{port} ({dns_info}{auth_info})"
-                route = Route(index=len(routes), opener=opener, label=label)
-                routes.append(route)
-                self.app.log(f"[PROXY] #{len(routes)}: {label}")
-
-        # Прямое подключение с переиспользованием TLS-сессии (HTTP Keep-Alive)
-        direct_route = Route(index=len(routes), opener=KeepAliveOpener(), label="direct")
-        routes.append(direct_route)
-        self.app.log(f"[PROXY] Direct connection added ({len(routes)} total routes)")
-
-        return routes
-
-    def benchmark_routes(self, kwargs=None):
-        """Фоновый замер пинга всех маршрутов через легкий getMe запрос."""
-        return self.route_optimizer.benchmark(self.bot_token, timeout=3.5)
+        return urllib.request.build_opener()
 
     def _tg_api(self, method, payload, timeout=5, quiet=False):
-        """
-        Выполняет HTTP-запрос к Telegram Bot API.
-        Всегда использует самый быстрый доступный маршрут, замеряя время ответа.
-        При ошибке мгновенно пробует следующий по скорости маршрут.
-        """
+        """Выполняет прямой HTTP-запрос к Telegram Bot API."""
         if not self.bot_token:
             return None
         url = f"https://api.telegram.org/bot{self.bot_token}/{method}"
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-
-        ordered_routes = self.route_optimizer.get_ordered_routes()
-        n = len(ordered_routes)
-
-        for attempt, route in enumerate(ordered_routes):
-            req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-            t0 = time.monotonic()
+        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+        t0 = time.monotonic()
+        try:
+            with self._opener.open(req, timeout=timeout) as resp:
+                dur = time.monotonic() - t0
+                result = json.loads(resp.read().decode("utf-8"))
+                self.app.log(f"[OK] Telegram API {method} OK ({int(dur * 1000)}ms)")
+                return result
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", errors="replace")
+            if not quiet:
+                self.app.log(f"[ERROR] Telegram API error {e.code} for {method}: {body}")
             try:
-                with route.opener.open(req, timeout=timeout) as resp:
-                    dur = time.monotonic() - t0
-                    route.record_success(dur)
-                    result = json.loads(resp.read().decode("utf-8"))
-
-                    if route.label != self._active_route_label:
-                        self.app.log(f"[ROUTE] Active route: {route.label} ({int(dur * 1000)}ms)")
-                        self._active_route_label = route.label
-                    self.app.log(f"[OK] Telegram API {method} OK ({int(dur * 1000)}ms via {route.label})")
-                    return result
-            except urllib.error.HTTPError as e:
-                # HTTP-ответ получен — сам маршрут работает исправно
-                dur = time.monotonic() - t0
-                route.record_success(dur)
-                body = e.read().decode("utf-8", errors="replace")
-                if not quiet:
-                    self.app.log(f"[ERROR] Telegram API error {e.code} for {method}: {body}")
-                try:
-                    return json.loads(body)
-                except Exception:
-                    return {"ok": False, "error_code": e.code, "description": body}
-            except Exception as e:
-                dur = time.monotonic() - t0
-                route.record_failure(e)
-                if attempt < n - 1:
-                    self.app.log(f"[TIMEOUT] {route.label} failed ({e}), trying next fastest route...")
-                else:
-                    self.app.log(f"[ERROR] All {n} Telegram API routes failed for {method}: {e}")
-        return None
+                return json.loads(body)
+            except Exception:
+                return {"ok": False, "error_code": e.code, "description": body}
+        except Exception as e:
+            if not quiet:
+                self.app.log(f"[ERROR] Telegram API call {method} failed: {e}")
+            return None
 
     def _build_inline_markup(self, inline_keyboard):
         """Преобразует список кнопок в формат InlineKeyboardMarkup."""
@@ -320,7 +138,6 @@ class TelegramAPI:
         payload = {"chat_id": self.chat_id}
 
         if rich_html:
-            # Rich HTML: кнопки встроены в тело через <tg-button>, reply_markup не нужен
             payload["rich_message"] = {"html": rich_html}
         else:
             payload["rich_message"] = {"blocks": blocks}
@@ -376,8 +193,8 @@ class TelegramAPI:
             kwargs["inline_keyboard"] = inline_keyboard
         if self.chat_id:
             kwargs["chat_id"] = self.chat_id
-            
-        self.app.log(f"[SEND] MESSAGE via HA")
+
+        self.app.log("[SEND] MESSAGE via HA")
         response = self.app.call_service("telegram_bot/send_message", **kwargs)
         try:
             if response and "result" in response:
@@ -394,7 +211,7 @@ class TelegramAPI:
             "message_id": message_id,
             "message": text,
             "parse_mode": parse_mode,
-            "inline_keyboard": inline_keyboard or []
+            "inline_keyboard": inline_keyboard or [],
         }
         if self.chat_id:
             kwargs["chat_id"] = self.chat_id
@@ -411,7 +228,7 @@ class TelegramAPI:
         try:
             kwargs = {
                 "message_id": self.main_message_id,
-                "disable_notification": True
+                "disable_notification": True,
             }
             if self.chat_id:
                 kwargs["chat_id"] = self.chat_id
@@ -428,9 +245,11 @@ class TelegramAPI:
         Рендерит основное сообщение бота.
 
         Один вызов к Telegram API (rich_html ИЛИ rich_blocks), при отсутствии
-        bot_token — fallback через HA. Никогда не делает каскад вызовов.
+        bot_token — fallback через HA.
         """
-        compare_key = rich_html or (json.dumps(rich_blocks, ensure_ascii=False, sort_keys=True) if rich_blocks else text)
+        compare_key = rich_html or (
+            json.dumps(rich_blocks, ensure_ascii=False, sort_keys=True) if rich_blocks else text
+        )
 
         if self.main_message_id is not None:
             if self.last_text == compare_key and self.last_keyboard == inline_keyboard:
@@ -485,10 +304,6 @@ class TelegramAPI:
     def send_notification(self, text, inline_keyboard=None, parse_mode="html"):
         """
         Отправляет всплывающее уведомление. Возвращает message_id или None.
-
-        Когда заданы bot_token и chat_id, отправка идёт только напрямую через Bot API:
-        fallback на HA telegram_bot/send_message не возвращает message_id в AppDaemon,
-        что порождает неотслеживаемые сообщения в чате и каскад повторов при reconcile().
         """
         if self.bot_token and self.chat_id:
             payload = {"chat_id": self.chat_id, "text": text, "parse_mode": "HTML"}
@@ -528,7 +343,6 @@ class TelegramAPI:
             result = self._tg_api("editMessageText", payload)
             if result and result.get("ok"):
                 return True
-            # «Сообщение не изменилось» — не ошибка
             if result and "message is not modified" in str(result.get("description", "")).lower():
                 return True
             return False
@@ -537,7 +351,7 @@ class TelegramAPI:
             "message_id": message_id,
             "message": text,
             "parse_mode": parse_mode,
-            "inline_keyboard": inline_keyboard or []
+            "inline_keyboard": inline_keyboard or [],
         }
         if self.chat_id:
             kwargs["chat_id"] = self.chat_id
@@ -566,7 +380,6 @@ class TelegramAPI:
                 return True
             if result is not None:
                 description = str(result.get("description", "")).lower()
-                # Сообщения уже нет — повторять бессмысленно
                 if any(marker in description for marker in (
                     "message to delete not found",
                     "message identifier is not specified",
@@ -574,7 +387,6 @@ class TelegramAPI:
                 )):
                     self.app.log(f"[DEL] Notification {message_id} already gone: {description}")
                     return True
-                # Сообщение старше 48 часов: Telegram не даёт удалить, но позволяет отредактировать
                 if "message can't be deleted" in description:
                     self.app.log(f"[DEL] Notification {message_id} too old to delete, clearing buttons")
                     self.edit_notification(message_id, "✅ Свет выключен", inline_keyboard=[])
@@ -591,13 +403,3 @@ class TelegramAPI:
         except Exception as e:
             self.app.log(f"Failed to delete notification {message_id}: {e}")
             return False
-
-    def answer_callback_query(self, callback_query_id, text=None):
-        """Подтверждает нажатие inline-кнопки, снимая индикатор ожидания в клиенте Telegram."""
-        if not callback_query_id or not self.bot_token:
-            return False
-        payload = {"callback_query_id": callback_query_id}
-        if text:
-            payload["text"] = text
-        result = self._tg_api("answerCallbackQuery", payload, timeout=3, quiet=True)
-        return bool(result and result.get("ok"))

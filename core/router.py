@@ -11,12 +11,13 @@ class Router:
     поэтому "/menu:ac_modes:" находится раньше "/menu:").
     """
 
-    def __init__(self, app, menu_manager, light_monitor, automations, telegram_api):
+    def __init__(self, app, menu_manager, light_monitor, automations, telegram_api, flight_monitor=None):
         self.app = app
         self.menu_manager = menu_manager
         self.light_monitor = light_monitor
         self.automations = automations
         self.telegram = telegram_api
+        self.flight_monitor = flight_monitor
         self._current_callback_message_id = None
 
         self._exact = {
@@ -40,6 +41,7 @@ class Router:
             "/turn_off_all:": self._turn_off_all,
             "/turn_off:": self._turn_off,
             "/timer:": self._timer,
+            "/flights:": self._flights,
         }
         # Более длинный (специфичный) префикс должен проверяться первым
         self._prefix = sorted(prefixes.items(), key=lambda kv: -len(kv[0]))
@@ -65,7 +67,6 @@ class Router:
 
         msg_data = data.get("message") if isinstance(data.get("message"), dict) else {}
         self._current_callback_message_id = data.get("message_id") or msg_data.get("message_id")
-        callback_id = data.get("id")
 
         try:
             handler = self._exact.get(command)
@@ -81,8 +82,6 @@ class Router:
             self.app.log(f"[WARN] Unhandled callback: {command}")
         finally:
             self._current_callback_message_id = None
-            if callback_id and hasattr(self.telegram, "answer_callback_query"):
-                self.telegram.answer_callback_query(callback_id)
 
     # ───────────── Навигация по меню ─────────────
 
@@ -242,3 +241,48 @@ class Router:
             return
 
         self.menu_manager.show_timer_edit_menu(entity)
+
+    # ───────────── Поиск авиабилетов ─────────────
+
+    def _flights(self, payload):
+        """
+        Команды меню авиабилетов:
+          search             — запустить поиск сейчас и прислать отчёт
+          toggle             — включить/выключить ежедневный автопоиск
+          time:<delta_min>   — сдвинуть время ежедневной проверки на N минут
+          set_time:<HH:MM>   — установить точное время ежедневной проверки
+          budget:<delta_rub> — изменить максимальный бюджет
+          reset              — вернуть настройки по умолчанию
+        """
+        if not self.flight_monitor:
+            return
+
+        if payload == "search":
+            self.flight_monitor.run_search(send_report=True, async_run=True)
+            self.menu_manager.show_menu("flights")
+            return
+
+        if payload == "toggle":
+            self.flight_monitor.toggle_enabled()
+        elif payload == "reset":
+            self.flight_monitor.reset_settings()
+        elif payload.startswith("time:"):
+            try:
+                delta = int(payload.split(":", 1)[1])
+                self.flight_monitor.adjust_check_time(delta)
+            except ValueError:
+                return
+        elif payload.startswith("set_time:"):
+            hh_mm = payload.split(":", 1)[1]
+            self.flight_monitor.set_check_time(hh_mm)
+        elif payload.startswith("budget:"):
+            try:
+                delta_rub = int(payload.split(":", 1)[1])
+                self.flight_monitor.adjust_max_price(delta_rub)
+            except ValueError:
+                return
+        else:
+            return
+
+        self.menu_manager.show_menu("flights")
+

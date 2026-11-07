@@ -15,6 +15,8 @@ from ui.views import (
     build_timers_keyboard,
     build_timer_edit_rich_blocks,
     build_timer_edit_keyboard,
+    build_flights_rich_blocks,
+    build_flights_keyboard,
 )
 from ui.keyboards import MAIN_KEYBOARD_INLINE
 
@@ -214,6 +216,22 @@ class TimerEditMenu(Menu):
         )
 
 
+class FlightsMenu(Menu):
+    """Меню поиска авиабилетов и настройки ежедневного расписания"""
+    def __init__(self, app, flight_monitor):
+        self.app = app
+        self.flight_monitor = flight_monitor
+
+    def render(self):
+        summary = self.flight_monitor.status_summary()
+        blocks, fallback_text = build_flights_rich_blocks(summary)
+        return blocks, fallback_text, build_flights_keyboard(summary), "html"
+
+    def render_html(self):
+        summary = self.flight_monitor.status_summary()
+        return rich_views.render_flights_menu(summary)
+
+
 class MenuManager:
     # Префиксы меню, которые несут в себе entity_id: "префикс:" -> (builder_key, sub_menu)
     _AC_SUBMENUS = (
@@ -222,10 +240,11 @@ class MenuManager:
         ("ac:", None),
     )
 
-    def __init__(self, app, telegram_api, light_monitor=None):
+    def __init__(self, app, telegram_api, light_monitor=None, flight_monitor=None):
         self.app = app
         self.telegram = telegram_api
         self.light_monitor = light_monitor
+        self.flight_monitor = flight_monitor
         self.current_menu = None
 
         if not hasattr(self.app, "last_ac_modes"):
@@ -240,6 +259,9 @@ class MenuManager:
         }
         if light_monitor is not None:
             self.menus["timers"] = TimersMenu(app, light_monitor)
+        if flight_monitor is not None:
+            self.menus["flights"] = FlightsMenu(app, flight_monitor)
+            flight_monitor.on_update = self.refresh
 
         # Слушатели изменений состояний (атрибуты нужны только для климата и погоды,
         # чтобы телеметрия Zigbee linkquality/last_seen не дёргала поток на выключателях)

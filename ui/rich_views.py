@@ -67,6 +67,7 @@ def render_main_menu(categories, ac_device=None):
     if ac_device:
         buttons.append(("❄️ Кондей", f"/menu:ac:{ac_device['entity']}"))
     buttons.append(("⏱ Таймеры", "/menu:timers"))
+    buttons.append(("✈️ Билеты", "/menu:flights"))
     buttons.append(("🌙 Ночной режим", "/night_mode"))
 
     # Собираем таблицу по 2 кнопки в ряду
@@ -423,3 +424,110 @@ def render_timer_edit_menu(name, entity, minutes, default_minutes, is_on):
     ], align="center"))
 
     return "\n".join(lines)
+
+
+# ───────────── Авиабилеты (Flight Finder) ─────────────
+
+def render_flights_menu(summary):
+    """Rich HTML для меню поиска авиабилетов и настройки ежедневной проверки."""
+    origins_str = ", ".join(summary["origins"])
+    dest = summary["destination"]
+    enabled = summary["enabled"]
+    check_time = summary["check_time"]
+    max_price = summary["max_price"]
+    price_fmt = f"{max_price:,}".replace(",", " ")
+
+    lines = [
+        f"<h3>✈️ Авиабилеты: {escape(origins_str)} → {escape(dest)}</h3>",
+        (
+            f"<p>📅 <b>Вылет:</b> {escape(summary['depart_from'])} — {escape(summary['depart_to'])} "
+            f"({summary['stay_min_days']}–{summary['stay_max_days']} дн.)<br>"
+            f"💰 <b>Бюджет:</b> до {price_fmt} ₽ | "
+            f"🔄 Пересадок: ≤ {summary['max_transfers']} | "
+            f"⏱ В пути: ≤ {summary['max_duration_hours']} ч</p>"
+        ),
+    ]
+
+    schedule_status = f"🟢 Вкл (каждый день в {escape(check_time)})" if enabled else "🔴 Выключен"
+    lines.append(f"<p>⏰ <b>Автопоиск:</b> {schedule_status}</p>")
+
+    if not summary["has_token"]:
+        lines.append(
+            "<p>⚠️ <b>Токен не задан:</b> укажите <code>tp_token</code> в "
+            "<code>FLIGHT_CONFIG</code> (<code>config.py</code>) или <code>TP_TOKEN</code>.</p>"
+        )
+
+    if summary["is_searching"]:
+        lines.append("<p>⏳ <b>Идёт поиск билетов...</b></p>")
+    elif summary["last_error"]:
+        lines.append(f"<p>⚠️ <b>Ошибка:</b> {escape(str(summary['last_error']))}</p>")
+    elif summary["last_check"]:
+        lines.append(
+            f"<p>🕒 Последняя проверка: {escape(str(summary['last_check']))} "
+            f"(найдено: <b>{summary['last_total']}</b>)</p>"
+        )
+
+    results = summary.get("last_results") or []
+    if results:
+        lines.append('<table bordered striped compact>')
+        lines.append("<tr><th>Цена</th><th>Рейс</th><th>Туда / Обратно</th><th>Инфо</th></tr>")
+        for r in results:
+            r_price = f"{int(r['price']):,} ₽".replace(",", " ")
+            route_cell = f"{escape(str(r['origin']))}→{escape(dest)} ({escape(str(r.get('airline', '—')))})"
+            dates_cell = f"{escape(str(r['depart'])[:10])} – {escape(str(r['return'])[:10])}"
+            info_cell = (
+                f"{r['stay_days']}д, пер.{r['transfers_to']}/{r['transfers_back']}, "
+                f"{r['hours_to']}/{r['hours_back']}ч"
+            )
+            lines.append(
+                f"<tr><td><b>{r_price}</b></td><td>{route_cell}</td>"
+                f"<td>{dates_cell}</td><td>{info_cell}</td></tr>"
+            )
+        lines.append("</table>")
+
+    # Кнопка немедленного запуска поиска
+    search_label = "⏳ Поиск..." if summary["is_searching"] else "🔍 Найти сейчас и прислать отчёт"
+    lines.append(_btn_row([
+        _btn(search_label, "/flights:search", "primary"),
+    ], align="center"))
+
+    # Настройка времени ежедневной проверки
+    lines.append("<h4>⏰ Время ежедневной проверки</h4>")
+    lines.append(_btn_row([
+        _btn("➖ 1ч", "/flights:time:-60"),
+        _btn("➖ 15м", "/flights:time:-15"),
+        _btn_disabled(f"🕒 {check_time}"),
+        _btn("➕ 15м", "/flights:time:15"),
+        _btn("➕ 1ч", "/flights:time:60"),
+    ], align="center"))
+
+    preset_btns = [
+        _btn(t, f"/flights:set_time:{t}", "primary" if check_time == t else None)
+        for t in ("08:00", "10:00", "14:00", "20:00")
+    ]
+    lines.append(_btn_row(preset_btns, align="center"))
+
+    # Настройка бюджета
+    lines.append("<h4>💰 Максимальная цена</h4>")
+    lines.append(_btn_row([
+        _btn("➖ 5 000 ₽", "/flights:budget:-5000"),
+        _btn_disabled(f"{price_fmt} ₽"),
+        _btn("➕ 5 000 ₽", "/flights:budget:5000"),
+    ], align="center"))
+
+    toggle_btn = (
+        _btn("🔕 Выкл автопоиск", "/flights:toggle", "danger")
+        if enabled
+        else _btn("🔔 Вкл автопоиск", "/flights:toggle", "success")
+    )
+    lines.append(_btn_row([
+        toggle_btn,
+        _btn("♻️ По умолчанию", "/flights:reset"),
+    ], align="center"))
+
+    lines.append(_btn_row([
+        _btn("⬅️ Назад", "/back"),
+    ], align="center"))
+
+    return "\n".join(lines)
+

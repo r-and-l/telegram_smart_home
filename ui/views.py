@@ -435,3 +435,92 @@ def build_ac_keyboard(entity_id, sub_menu=None, state="off"):
         ]
     ]
 
+
+# ───────────── Авиабилеты (Flight Finder) ─────────────
+
+def build_flights_rich_blocks(summary):
+    """Строит rich-блоки и fallback-текст для меню поиска авиабилетов."""
+    origins_str = ", ".join(summary["origins"])
+    dest = summary["destination"]
+    enabled = summary["enabled"]
+    check_time = summary["check_time"]
+    price_fmt = f"{summary['max_price']:,}".replace(",", " ")
+
+    heading = f"✈️ Авиабилеты: {origins_str} → {dest}"
+    schedule_str = f"🟢 Вкл (ежедневно в {check_time})" if enabled else "🔴 Выключен"
+
+    param_rows = [
+        ["Окно вылета", f"{summary['depart_from']} — {summary['depart_to']}"],
+        ["Длительность", f"{summary['stay_min_days']}–{summary['stay_max_days']} дн."],
+        ["Бюджет", f"до {price_fmt} ₽"],
+        ["Автопоиск", schedule_str],
+    ]
+    if summary.get("last_check"):
+        param_rows.append(["Последняя проверка", f"{summary['last_check']} (найдено: {summary['last_total']})"])
+
+    blocks = [
+        build_rich_section_heading(heading),
+        build_rich_table_block(["Параметр", "Значение"], param_rows),
+    ]
+
+    fallback_lines = [f"<b>{heading}</b>\n"]
+    for k, v in param_rows:
+        fallback_lines.append(f"<b>{k}:</b> {v}")
+
+    if not summary.get("has_token"):
+        warn = "⚠️ Не задан tp_token в FLIGHT_CONFIG (config.py) или TP_TOKEN."
+        blocks.append(build_rich_paragraph(warn))
+        fallback_lines.append(f"\n{warn}")
+    elif summary.get("last_error"):
+        err = f"⚠️ Ошибка: {summary['last_error']}"
+        blocks.append(build_rich_paragraph(err))
+        fallback_lines.append(f"\n{err}")
+
+    results = summary.get("last_results") or []
+    if results:
+        flight_rows = []
+        fallback_lines.append("\n<b>Лучшие варианты:</b>")
+        for r in results:
+            r_price = f"{int(r['price']):,} ₽".replace(",", " ")
+            route = f"{r['origin']}→{dest} ({r.get('airline', '—')})"
+            dates = f"{str(r['depart'])[:10]} – {str(r['return'])[:10]}"
+            info = f"{r['stay_days']}д, пер.{r['transfers_to']}/{r['transfers_back']}"
+            flight_rows.append([r_price, route, dates, info])
+            fallback_lines.append(f"• {r_price} | {route} | {dates} ({info})")
+        blocks.append(build_rich_table_block(["Цена", "Рейс", "Даты", "Инфо"], flight_rows))
+
+    return blocks, "\n".join(fallback_lines)
+
+
+def build_flights_keyboard(summary):
+    """Инлайн-клавиатура для меню поиска авиабилетов."""
+    enabled = summary["enabled"]
+    search_label = "⏳ Поиск..." if summary.get("is_searching") else "🔍 Найти сейчас"
+    toggle_btn = (
+        ("🔕 Выкл автопоиск", "/flights:toggle")
+        if enabled
+        else ("🔔 Вкл автопоиск", "/flights:toggle")
+    )
+    return [
+        [(search_label, "/flights:search")],
+        [
+            ("➖ 1ч", "/flights:time:-60"),
+            ("➖ 15м", "/flights:time:-15"),
+            ("➕ 15м", "/flights:time:15"),
+            ("➕ 1ч", "/flights:time:60"),
+        ],
+        [
+            ("08:00", "/flights:set_time:08:00"),
+            ("10:00", "/flights:set_time:10:00"),
+            ("14:00", "/flights:set_time:14:00"),
+            ("20:00", "/flights:set_time:20:00"),
+        ],
+        [
+            ("➖ 5 000 ₽", "/flights:budget:-5000"),
+            ("➕ 5 000 ₽", "/flights:budget:5000"),
+        ],
+        [toggle_btn, ("♻️ По умолчанию", "/flights:reset")],
+        [("⬅️ Назад", "/back")],
+    ]
+
+

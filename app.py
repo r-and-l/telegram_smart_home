@@ -8,7 +8,7 @@ import importlib
 # поэтому обновлённый конфиг должен быть в силе до его перезагрузки.
 _project_modules = [
     mod for mod in list(sys.modules.keys())
-    if any(mod.startswith(p) for p in ("core", "services", "ui", "config"))
+    if any(mod.startswith(p) for p in ("core", "services", "ui", "config", "flight_finder"))
 ]
 for mod in sorted(_project_modules, key=lambda m: (not m.startswith("config"), m)):
     try:
@@ -22,18 +22,25 @@ from core.telegram_api import TelegramAPI
 from core.router import Router
 from services.menu_manager import MenuManager
 from services.light_monitor import LightMonitor
+from services.flight_monitor import FlightMonitor
 from services.automations import Automations
 
 
 class TelegramSmartHome(hass.Hass):
 
     def initialize(self):
-        # Общее персистентное хранилище: id сообщений, уведомления, таймеры
+        # Общее персистентное хранилище: id сообщений, уведомления, таймеры, авиабилеты
         self.store = Store(self)
 
         self.telegram_api = TelegramAPI(self, store=self.store)
         self.light_monitor = LightMonitor(self, self.telegram_api, store=self.store)
-        self.menu_manager = MenuManager(self, self.telegram_api, light_monitor=self.light_monitor)
+        self.flight_monitor = FlightMonitor(self, self.telegram_api, store=self.store)
+        self.menu_manager = MenuManager(
+            self,
+            self.telegram_api,
+            light_monitor=self.light_monitor,
+            flight_monitor=self.flight_monitor,
+        )
         self.automations = Automations(self, self.telegram_api, self.menu_manager)
 
         self.router = Router(
@@ -41,7 +48,8 @@ class TelegramSmartHome(hass.Hass):
             menu_manager=self.menu_manager,
             light_monitor=self.light_monitor,
             automations=self.automations,
-            telegram_api=self.telegram_api
+            telegram_api=self.telegram_api,
+            flight_monitor=self.flight_monitor,
         )
 
         self.run_every(self.menu_manager.auto_update, "now", 60)
@@ -54,9 +62,7 @@ class TelegramSmartHome(hass.Hass):
             LIGHT_MONITOR_CONFIG.get("reconcile_interval", 60)
         )
 
-        # Периодический бенчмарк маршрутов (каждые 5 минут), если заданы прокси:
-        # замеряет пинг через каждый маршрут и выбирает быстрейший
-        if self.telegram_api.bot_token and len(self.telegram_api.route_optimizer.routes) > 1:
-            self.run_every(self.telegram_api.benchmark_routes, "now + 5", 300)
+        # Ежеминутная проверка расписания ежедневного поиска авиабилетов
+        self.run_every(self.flight_monitor.tick, "now", 60)
 
         self.log("SMART HOME BOT STARTED")
