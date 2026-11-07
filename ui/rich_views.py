@@ -513,7 +513,8 @@ def render_flights_report_html(summary):
         lines.append(_render_flights_results_table(results, default_dest=dests[0]))
 
     lines.append(_btn_row([
-        _btn("✈️ Открыть меню билетов", "/menu:flights", "primary"),
+        _btn("⚙️ Настроить поиск", "/flights:open_menu", "primary"),
+        _btn("🗑 Скрыть отчёт", "/flights:dismiss", "danger"),
     ], align="center"))
     return "\n".join(lines)
 
@@ -678,11 +679,17 @@ def render_flights_menu(summary, sub_menu=None):
     results = summary.get("last_results") or []
     if results:
         lines.append(_render_flights_results_table(results, default_dest=dests[0]))
+        lines.append(
+            "<p>💡 <i>API отдаёт цены из кэша поиска (за последние 48ч). "
+            "Проверяйте обе ссылки: на китайских авиакомпаниях цена на <b>Trip.com</b> "
+            "часто на 10–15 тыс. ₽ ниже, чем у агентств на Aviasales.</i></p>"
+        )
 
-    # Кнопка немедленного запуска поиска
-    search_label = "⏳ Поиск..." if summary["is_searching"] else "🔍 Найти сейчас и прислать отчёт"
+    # Кнопка немедленного запуска поиска (обновляет таблицу прямо в меню)
+    search_label = "⏳ Идёт поиск..." if summary["is_searching"] else "🔍 Обновить таблицу сейчас"
     lines.append(_btn_row([
         _btn(search_label, "/flights:search", "primary"),
+        _btn("📤 Прислать отчёт", "/flights:report"),
     ], align="center"))
 
     # Кнопки перехода к настройке маршрута и дат

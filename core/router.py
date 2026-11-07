@@ -266,7 +266,26 @@ class Router:
             return
 
         if payload == "search":
+            # Обновляет таблицу прямо внутри открытого меню без дублирующего сообщения
+            self.flight_monitor.run_search(send_report=False, async_run=True)
+            self.menu_manager.show_menu("flights")
+            return
+
+        if payload == "report":
+            # Принудительный поиск с отправкой отдельного сообщения-отчёта
             self.flight_monitor.run_search(send_report=True, async_run=True)
+            self.menu_manager.show_menu("flights")
+            return
+
+        if payload == "dismiss":
+            if self._current_callback_message_id:
+                self.telegram.delete_notification(self._current_callback_message_id)
+            return
+
+        if payload == "open_menu":
+            if self._current_callback_message_id and self._current_callback_message_id != self.telegram.main_message_id:
+                self.telegram.delete_notification(self._current_callback_message_id)
+            self.telegram.last_text = None
             self.menu_manager.show_menu("flights")
             return
 
