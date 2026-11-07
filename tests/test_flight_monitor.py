@@ -142,6 +142,42 @@ class TestFlightMonitor(unittest.TestCase):
         self.assertEqual(fm.check_time, "08:00")
         self.assertIn("08:00", self.tg.rendered[-1]["rich_html"])
 
+    def test_route_and_date_customization_via_callbacks(self):
+        lm = LightMonitor(self.app, self.tg, store=self.store)
+        fm = FlightMonitor(self.app, self.tg, store=self.store)
+        mm = MenuManager(self.app, self.tg, light_monitor=lm, flight_monitor=fm)
+        auto = Automations(self.app, self.tg, mm)
+        router = Router(self.app, mm, lm, auto, self.tg, flight_monitor=fm)
+
+        # Переход в подменю городов вылета и добавление LED
+        router.inline_callback("telegram_callback", {"command": "/menu:flights_origins", "chat_id": 12345}, {})
+        self.assertEqual(mm.current_menu, "flights_origins")
+        router.inline_callback("telegram_callback", {"command": "/flights:origin:LED", "chat_id": 12345}, {})
+        self.assertIn("LED", fm.origins)
+
+        # Переход в подменю назначения и выбор Бангкока (BKK)
+        router.inline_callback("telegram_callback", {"command": "/menu:flights_dest", "chat_id": 12345}, {})
+        router.inline_callback("telegram_callback", {"command": "/flights:dest:BKK", "chat_id": 12345}, {})
+        self.assertEqual(fm.destination, "BKK")
+        self.assertIn("Бангкок (BKK)", self.tg.rendered[-1]["rich_html"])
+
+        # Переход в подменю дат и сдвиг дат + выбор длительности
+        router.inline_callback("telegram_callback", {"command": "/menu:flights_dates", "chat_id": 12345}, {})
+        router.inline_callback("telegram_callback", {"command": "/flights:from:7", "chat_id": 12345}, {})
+        self.assertEqual(fm.depart_from, "2027-02-01")
+        router.inline_callback("telegram_callback", {"command": "/flights:span:14", "chat_id": 12345}, {})
+        self.assertEqual(fm.depart_to, "2027-02-15")
+        router.inline_callback("telegram_callback", {"command": "/flights:stay:12:16", "chat_id": 12345}, {})
+        self.assertEqual((fm.stay_min_days, fm.stay_max_days), (12, 16))
+
+        # Проверяем сохранение в Store
+        fm_reloaded = FlightMonitor(self.app, self.tg, store=self.store)
+        self.assertIn("LED", fm_reloaded.origins)
+        self.assertEqual(fm_reloaded.destination, "BKK")
+        self.assertEqual(fm_reloaded.depart_from, "2027-02-01")
+        self.assertEqual(fm_reloaded.depart_to, "2027-02-15")
+        self.assertEqual((fm_reloaded.stay_min_days, fm_reloaded.stay_max_days), (12, 16))
+
 
 if __name__ == "__main__":
     unittest.main()
